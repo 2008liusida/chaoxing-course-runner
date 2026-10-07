@@ -57,9 +57,7 @@
 
 ### 变更
 
-- 移除 `Run-Interactive.bat`。日常只需 `Start.bat`；
-  需要分步骤引导时改用
-  `powershell -NoProfile -ExecutionPolicy Bypass -File Run-Interactive.ps1`
+- 移除 `Run-Interactive.bat`。日常只需 `Start.bat`
 
 ### 已知限制
 

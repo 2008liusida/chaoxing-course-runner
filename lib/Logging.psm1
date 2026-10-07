@@ -38,11 +38,6 @@ function Write-RunnerLog {
         日志文件路径。为空则只输出到控制台。
     .PARAMETER Level
         DEBUG / INFO / WARN / ERROR / OK。OK 只影响颜色，语义上等同于"成功"。
-    .PARAMETER Transient
-        临时行：输出到控制台但不写文件。
-        用于播放进度这类高频刷新、无长期价值的信息 ——
-        写进文件会把日志撑大，并淹没"完成 / 跳过 / 失败原因"等关键事件。
-        文件里仍会周期性留下里程碑记录（由调用方决定何时记录）。
     .EXAMPLE
         Write-RunnerLog -Message '开始播放' -Path '.\logs\run.log' -Level INFO
     #>
@@ -51,7 +46,6 @@ function Write-RunnerLog {
         [Parameter(Mandatory, Position = 0)][AllowEmptyString()][string]$Message,
         [Parameter(Position = 1)][string]$Path,
         [ValidateSet('DEBUG', 'INFO', 'WARN', 'ERROR', 'OK')][string]$Level = 'INFO',
-        [switch]$Transient,
         [switch]$FileOnly
     )
 
@@ -87,22 +81,6 @@ function Write-RunnerLog {
         return
     }
 
-    if ($Transient) {
-        # 就地覆盖当前行（不清屏，保留上下文）。宽度自适应，避免折行。
-        $width = 100
-        try {
-            $w = $Host.UI.RawUI.WindowSize.Width
-            if ($w -gt 20) { $width = $w - 1 }
-        } catch { }
-        if ($consoleLine.Length -gt $width) {
-            $consoleLine = $consoleLine.Substring(0, $width)
-        } else {
-            $pad = $width - $consoleLine.Length
-            if ($pad -gt 0) { $consoleLine = $consoleLine + (' ' * $pad) }
-        }
-        Write-Host ("`r" + $consoleLine) -ForegroundColor $color -NoNewline
-        return
-    }
 
     # 非临时行：若上一行是就地刷新的进度行，先换行收尾，避免它被覆盖
     if ($script:ProgressLineActive) {
@@ -128,7 +106,7 @@ function Write-ProgressLine {
     .SYNOPSIS
         在控制台同一行内刷新进度（单条进度条）。
     .DESCRIPTION
-        与 Write-RunnerLog -Transient 的区别：本函数总是不写文件，
+        本函数总是不写文件，
         专用于"播放进度"这一类高频刷新。
         结束后请调用 Clear-ProgressLine 换行收尾。
     .PARAMETER Text

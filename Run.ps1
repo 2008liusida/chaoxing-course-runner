@@ -149,19 +149,6 @@ function Write-Log {
     }
 }
 
-# 课节处理逻辑来自 lib\LessonRunner.psm1，它通过这个脚本块回调本脚本的日志出口。
-# 加 -Transient 的两条路径：进度条类信息只刷屏不写文件，避免日志被撑爆。
-$logBlock = {
-    param($Message, $Level = 'INFO', [switch]$Transient, [switch]$FileOnly)
-    if ($FileOnly) {
-        # 只落盘、不上控制台，避免打断进度条的就地刷新
-        Write-RunnerLog -Message $Message -Level $Level -Path $cfg.LogFile -FileOnly
-    } elseif ($Transient) {
-        Write-RunnerLog -Message $Message -Level $Level -Transient
-    } else {
-        Write-Log -Message $Message -Level $Level
-    }
-}
 
 # ---------------------------------------------------------------- 辅助函数
 
@@ -619,7 +606,7 @@ try {
     foreach ($lesson in $queue) {
         $ok = $false
         try {
-            $ok = Invoke-Lesson -Session $session -Lesson $lesson -Selectors $selectors -Settings $cfg -WindowHandle $windowHandle -Log $logBlock
+            $ok = Invoke-Lesson -Session $session -Lesson $lesson -Selectors $selectors -Settings $cfg -WindowHandle $windowHandle -LogPath $cfg.LogFile
         } catch {
             Write-Log "处理课节 $($lesson.Id) 时出现异常: $($_.Exception.Message)" 'ERROR'
             Write-CdpDiag "Invoke-Lesson 异常: $($_.Exception.ToString())"

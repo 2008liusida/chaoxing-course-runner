@@ -2,7 +2,7 @@
     教案：课节处理状态机。
 
     从 Run.ps1 抽出来的原因：
-      Run.ps1（非交互）与 Run-Interactive.ps1（交互）都要用它。
+      由 Run.ps1 调用。
       两份实现必然失同步，所以放一条。
 
     依赖注入：-Selectors（选择器表）由调用方传入，
@@ -31,8 +31,9 @@ function Invoke-Lesson {
         MaxWaitMinutesPerLesson / KeepForeground / SwitchMode）。
     .PARAMETER WindowHandle
         浏览器窗口句柄，用于保持前台。
-    .PARAMETER Log
-        日志脚本块，签名 param($Message, $Level)。
+    .PARAMETER LogPath
+        日志文件路径。本模块只往文件里记关键事件与分钟级里程碑；
+        实时进度由 Write-ProgressLine 就地刷新，不进日志。
     .OUTPUTS
         Boolean：$true = 已确认完成。
     .NOTES
@@ -46,14 +47,15 @@ function Invoke-Lesson {
         [Parameter(Mandatory)][hashtable]$Selectors,
         [Parameter(Mandatory)]$Settings,
         [IntPtr]$WindowHandle = [IntPtr]::Zero,
-        [Parameter(Mandatory)][scriptblock]$Log
+        [Parameter(Mandatory)][string]$LogPath
     )
 
+    # 单节课内的日志出口。
+    # 设计：所有输出都同时上屏并落盘 —— 本模块只记关键事件，
+    # 高频进度已由 Write-ProgressLine 就地刷新，不会淹没日志。
     function Say {
-        param([string]$m, [string]$lv = 'INFO', [switch]$Transient, [switch]$FileOnly)
-        if ($FileOnly) { & $Log $m $lv -FileOnly }
-        elseif ($Transient) { & $Log $m $lv -Transient }
-        else { & $Log $m $lv }
+        param([string]$m, [string]$lv = 'INFO')
+        Write-RunnerLog -Message $m -Path $LogPath -Level $lv
     }
 
     Say ('------ 课节 ' + $Lesson.Id + ' 开始 ------')
@@ -236,7 +238,14 @@ function Invoke-Lesson {
         $milestone = [int]($state.Current / 60)
         if ($milestone -gt $lastMilestoneMin) {
             $lastMilestoneMin = $milestone
-            & $Log ("播放里程碑 " + $milestone + " 分钟 / 共 " + $durMin + " 分钟（" + $pct + "%）") 'DEBUG' -FileOnly
+            # 里程碑只落盘、不上屏 —— 上屏会打断进度条的就地刷新。
+            $stamp = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+            $line = '[' + $stamp + '] [DEBUG] 播放里程碑 ' + $milestone + ' 分钟 / 共 ' + $durMin + ' 分钟（' + $pct + '%）'
+            try {
+                $logDir = Split-Path -Parent $LogPath
+                if ($logDir -and -not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
+                Add-Content -Path $LogPath -Value $line -Encoding UTF8
+            } catch { }
         }
 
         # ---- 播到结尾 ----

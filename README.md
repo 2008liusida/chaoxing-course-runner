@@ -16,8 +16,9 @@
 ```
 
 日常只有一个入口：**双击 `Start.bat`**。
-需要分步骤引导时（首次使用、排查问题），可改用
-`powershell -ExecutionPolicy Bypass -File Run-Interactive.ps1`。
+
+想直接调脚本（例如排查问题时），可执行
+`powershell -ExecutionPolicy Bypass -File Run.ps1`，参数与 `Start.bat` 一致。
 
 终端会逐步引导你，全程中文彩色提示。
 

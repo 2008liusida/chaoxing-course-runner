@@ -26,14 +26,15 @@
 
 **双击 `Start.bat`**，然后跟着终端提示走。
 
-日常用 `Start.bat` 即可。需要分步骤引导时（首次使用、排查问题），
-可改用 `Run-Interactive.ps1`：
+日常用 `Start.bat` 即可。
+
+想直接调脚本（例如排查问题时）：
 
 ```
-powershell -NoProfile -ExecutionPolicy Bypass -File Run-Interactive.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File Run.ps1
 ```
 
-两者用的是同一套逻辑与配置，跑起来后的行为完全一致。
+参数与 `Start.bat` 完全一致。
 
 ### 运行时你会看到什么
 
@@ -321,7 +322,7 @@ Start.bat -NoForeground
 | `-PollSeconds 5` | 进度轮询间隔（秒），默认 1 |
 | `-NoForeground` | 不做可见性保障（自行保证窗口不被遮住） |
 
-也可以直接调用 `Run-Interactive.ps1` 获得同样的参数与彩色输出。
+也可以直接调用 `Run.ps1`，参数相同。
 
 ---
 

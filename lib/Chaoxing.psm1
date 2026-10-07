@@ -2,7 +2,7 @@
     平台层之一：课程页状态与切课。
 
     这里只做"读"和"切"，不做任何流程决策（比如"该不该跳过这一节"）。
-    流程决策留给调用方（Run.ps1 / Run-Interactive.ps1）。
+    流程决策留给调用方（Run.ps1）。
 
     支持两个平台版本（由 lib\PlatformDetect.psm1 识别，差异在此消化）：
       legacy  课节为 h5[id^=cur]，状态圆点 span.roundpoint
