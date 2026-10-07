@@ -107,7 +107,16 @@ function Invoke-Lesson {
         # 传入 VideoContextId 后，函数会先只读可见性 —— 正常情况直接返回，
         # 不抢前台也不等待；只有确实 hidden 时才恢复窗口与激活标签。
         if ($Settings.KeepForeground) {
-            $vis = Enable-LessonVideoPlayback -Session $Session -WindowHandle $WindowHandle -VideoContextId $videoCtx
+            $visArgs = @{
+                Session        = $Session
+                WindowHandle   = $WindowHandle
+                VideoContextId = $videoCtx
+            }
+            # 用 PSObject 判断：配置文件里没写这一项时不应抛异常
+            if ($Settings.PSObject.Properties['SideBySide'] -and $Settings.SideBySide) {
+                $visArgs.SideBySide = $true
+            }
+            $vis = Enable-LessonVideoPlayback @visArgs
             if (-not $vis.Ok) {
                 Say ("页面当前不可见（" + $vis.TopVisible + "），视频可能无法加载；已尝试恢复窗口与激活标签") 'WARN'
             }

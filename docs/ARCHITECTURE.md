@@ -170,8 +170,12 @@ Run.ps1                 流程决策：选哪些课节、播到什么时候停�
 
 播放循环（受 MaxWaitMinutesPerLesson 与停滞计数约束）
   ├─ Enable-LessonVideoPlayback：
-  │      窗口级 ShowWindow + SetForegroundWindow
-  │      加 标签页级 Page.bringToFront     ← 两步缺一不可，否则页面仍是 hidden
+  │      先读可见性 —— 已 visible 直接返回（不碰窗口、不等待）
+  │      只有确实 hidden 时才：窗口级 ShowWindow 恢复
+  │                          加 标签页级 Page.bringToFront
+  │      ← 两步缺一不可，否则页面仍是 hidden
+  │      ← 但不做 SetForegroundWindow：窗口可见即可，
+  │        抢焦点只会妨碍使用者操作终端（-SideBySide 可摆到屏幕一侧）
   ├─ 找播放器层帧；找不到 → 计数，刷新一次，仍无则跳过该节
   ├─ 内容层已有 .ans-job-finished → 判定完成，退出
   ├─ 时长未知 → 调 play() 触发加载（学习通要靠 play 才加载）
