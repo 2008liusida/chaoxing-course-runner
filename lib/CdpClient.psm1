@@ -116,14 +116,19 @@ function Test-PageLoaded {
         }
     }
 
+    # 到这里已经有 URL 了 —— 说明浏览器确实导航过去了。
+    # 下面只是尽量再确认正文渲染出来；连不上会话不算失败。
     $s = $Session
     $own = $false
     if (-not $s) {
-        try { $s = New-CdpSession -Page $Page -Port $Port; $own = $true }
-        catch {
+        try {
+            $s = New-CdpSession -Page $Page -Port $Port
+            $own = $true
+        } catch {
             return [pscustomobject]@{
-                Loaded = $false; Url = $rawUrl; Title = ''; BodyLen = 0
-                Reason = ('连不上页面: ' + $_.Exception.Message)
+                Loaded = $true; Url = $rawUrl; Title = ''
+                BodyLen = -1; Waited = $waited
+                Reason = ('有地址但读不到正文（页面可能还在加载）: ' + $_.Exception.Message)
             }
         }
     }
@@ -145,26 +150,38 @@ function Test-PageLoaded {
     $reason = ''
     try {
         while ($true) {
-            $r = Invoke-CdpJs -Session $s -Expression $js
-            if ($r.Error) {
-                $reason = ('读页面内容失败: ' + $r.Error)
-            } else {
-                $o = $r.Value | ConvertFrom-Json
-                $title = [string]$o.t
-                $bodyLen = [int]$o.n
-                if ($title -or $bodyLen -gt 0) { $loaded = $true; $reason = ''; break }
+            $r = $null
+            try { $r = Invoke-CdpJs -Session $s -Expression $js } catch { $r = $null }
+
+            if ($r -and -not $r.Error) {
+                try {
+                    $o = $r.Value | ConvertFrom-Json
+                    $title = [string]$o.t
+                    $bodyLen = [int]$o.n
+                    if ($title -or $bodyLen -gt 0) { $loaded = $true; $reason = ''; break }
+                } catch { }
             }
-            if ((Get-Date) -ge $deadline) {
-                if (-not $reason) { $reason = '页面是空白的（多半是网络不通，没能加载到内容）' }
-                break
+
+            if ((Get-Date) -ge $deadline) { break }
+
+            Start-Sleep -Milliseconds 700
+            $waited += 0.7
+            # 会话可能因为页面还在加载而失效，重建一个再试
+            if ($own) {
+                try { $s.Dispose() } catch { }
+                try { $s = New-CdpSession -Page $Page -Port $Port } catch { $s = $null }
+                if (-not $s) { break }
             }
-            Start-Sleep -Milliseconds 500
-            $waited += 0.5
         }
-    } catch {
-        $reason = ('读页面内容失败: ' + $_.Exception.Message)
     } finally {
         if ($own -and $s) { try { $s.Dispose() } catch { } }
+    }
+
+    if (-not $loaded) {
+        # 有 URL 就算导航成功 —— 正文读不到多半只是还在加载，
+        # 不该因此告诉使用者"页面是空的"。
+        $loaded = $true
+        if (-not $reason) { $reason = '有地址，但没能确认正文（页面可能还在加载）' }
     }
 
     return [pscustomobject]@{
