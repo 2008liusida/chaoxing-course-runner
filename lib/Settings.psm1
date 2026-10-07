@@ -138,7 +138,7 @@ function Get-RunnerSettings {
         MaxReplayPerLesson      = 1
         MaxWaitMinutesPerLesson = 40
         PlaybackRate            = 1.0
-        PollSeconds             = 20
+        PollSeconds             = 1
         KeepForeground          = $true
         LogFile                 = 'logs\run.log'
     }

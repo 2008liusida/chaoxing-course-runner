@@ -148,7 +148,7 @@
 | `$MaxReplayPerLesson` | `1` | 播完未登记时允许从头重播几次 |
 | `$MaxWaitMinutesPerLesson` | `40` | 单节最长等待，超过则跳过 |
 | `$PlaybackRate` | `1.0` | 播放速率，**不建议改** |
-| `$PollSeconds` | `20` | 进度轮询间隔（秒） |
+| `$PollSeconds` | `1` | 进度轮询间隔（秒），1 = 每秒刷新进度条 |
 | `$KeepForeground` | `$true` | 是否保持浏览器前台 |
 | `$SwitchMode` | `auto` | 切课方式，一般不用改 |
 

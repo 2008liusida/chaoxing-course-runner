@@ -24,7 +24,7 @@ $MaxLessons = 10
 $MaxReplayPerLesson = 1
 $MaxWaitMinutesPerLesson = 3
 $PlaybackRate = 1.0
-$PollSeconds = 3
+$PollSeconds = 1
 
 # 测试时不抢前台，避免影响你正在用的窗口
 $KeepForeground = $false

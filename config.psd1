@@ -53,7 +53,7 @@ $MaxWaitMinutesPerLesson = 40
 $PlaybackRate = 1.0
 
 # 进度轮询间隔（秒）。
-$PollSeconds = 20
+$PollSeconds = 1
 
 # 是否持续把浏览器窗口置于前台。
 # 超星的完成条件写明"观看时不可离开或将页面最小化"，

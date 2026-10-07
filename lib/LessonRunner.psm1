@@ -180,16 +180,22 @@ function Invoke-Lesson {
         }
 
         # ---- 停滞检测 ----
-        if ($state.Current -le $lastPosition + 1) { $stallCount++ } else { $stallCount = 0 }
+        # 阈值按"秒"换算而不是按"轮询次数"，否则改 PollSeconds 会连带改变容忍时长：
+        # 20 秒轮询下 12 次是 4 分钟，1 秒轮询下同样 12 次只剩 12 秒，
+        # 正常运行中的缓冲卡顿会被误判成失败。
+        if ($state.Current -gt $lastPosition + 0.3) { $stallCount = 0 } else { $stallCount++ }
         $lastPosition = $state.Current
 
-        if ($stallCount -gt 0 -and ($stallCount % 5) -eq 0) {
-            Say ("进度停滞 " + $stallCount + " 次，尝试继续播放") 'WARN'
+        $stallRetryPolls = [int][math]::Ceiling(60.0 / [math]::Max(1, [int]$Settings.PollSeconds))
+        $stallGiveUpPolls = [int][math]::Ceiling(240.0 / [math]::Max(1, [int]$Settings.PollSeconds))
+
+        if ($stallCount -gt 0 -and ($stallCount % $stallRetryPolls) -eq 0) {
+            Say ("进度停滞约 " + [int]($stallCount * $Settings.PollSeconds) + " 秒，尝试继续播放") 'WARN'
             $r = Start-VideoPlayback -Session $Session -ContextId $videoCtx -Rate $Settings.PlaybackRate
             Say ("  继续播放: " + $r)
         }
-        if ($stallCount -ge 12) {
-            Say '长时间无进展，放弃本节' 'ERROR'
+        if ($stallCount -ge $stallGiveUpPolls) {
+            Say ("长时间无进展（约 " + [int]($stallCount * $Settings.PollSeconds) + " 秒），放弃本节") 'ERROR'
             return $false
         }
 
