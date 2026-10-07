@@ -243,7 +243,7 @@ Write-Host '  ██║      ██╔██╗╚════╝██╔══
 Write-Host '  ╚██████╗██╔╝ ██╗     ██║  ██║╚██████╔╝██║ ╚████║██║ ╚████║███████╗██║  ██║' -ForegroundColor Magenta
 Write-Host '   ╚═════╝╚═╝  ╚═╝     ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═══╝╚═╝  ╚═══╝╚══════╝╚═╝  ╚═╝' -ForegroundColor Magenta
 Write-Host '  超星学习通 · 自动连播工具' -ForegroundColor Cyan
-Write-Host '  by liusida   github.com/2008liusida/chaoxing-course-runner' -ForegroundColor White
+Write-Host '  by liusida <1102271746@qq.com>   github.com/2008liusida/chaoxing-course-runner' -ForegroundColor White
 Write-Host '  ==========================================================' -ForegroundColor DarkCyan
 Write-Info ('工具目录: ' + $cfg.Root)
 Write-Info ('版本 2.1.0  日志: ' + $cfg.LogFile)

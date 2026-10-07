@@ -426,7 +426,7 @@ Write-Log '██║      ██╔██╗╚════╝██╔══█
 Write-Log '╚██████╗██╔╝ ██╗     ██║  ██║╚██████╔╝██║ ╚████║██║ ╚████║███████╗██║  ██║' 'OK'
 Write-Log ' ╚═════╝╚═╝  ╚═╝     ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═══╝╚═╝  ╚═══╝╚══════╝╚═╝  ╚═╝' 'OK'
 Write-Log '超星学习通 · 自动连播工具'
-Write-Log 'by liusida   github.com/2008liusida/chaoxing-course-runner'
+Write-Log 'by liusida <1102271746@qq.com>   github.com/2008liusida/chaoxing-course-runner'
 Write-Log '=========================================================='
 Write-Log "版本 2.1.0   工具目录: $($cfg.Root)"
 Write-Log '【免责声明】' 'WARN'
