@@ -56,6 +56,123 @@ function Write-CdpDiag {
 
 # ---------------------------------------------------------------- HTTP 接口
 
+
+function Test-PageLoaded {
+    <#
+    .SYNOPSIS
+        判断某个标签页是否真的加载出了内容。
+    .DESCRIPTION
+        为什么需要它：浏览器起来了、调试端口通了，不代表页面加载成功。
+        断网时 Chromium 会显示一片空白，既没有标题也不报错 ——
+        使用者只看到一个白窗口，不知道是工具坏了还是网络问题。
+
+        判定依据：
+          · url 为空            -> 页面从未导航（启动时就没拿到地址）
+          · title 与正文都为空  -> 白屏（多半是网络不通）
+    .PARAMETER Page
+        Get-CdpTargets 返回的标签页对象。
+    .PARAMETER Port
+        调试端口。
+    .PARAMETER Session
+        已有的 CDP 会话。给了就用它，省一次连接。
+    .PARAMETER WaitSeconds
+        等待页面出现内容的最长秒数，默认 15。
+        必须等待：冷启动时调试端口先就绪，此时页面还没开始导航，
+        立刻检查会误报"没有地址"—— 实测就是这样。
+    .OUTPUTS
+        PSCustomObject：@{ Loaded; Url; Title; BodyLen; Reason; Waited }
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$Page,
+        [int]$Port = 9222,
+        $Session = $null,
+        [int]$WaitSeconds = 15
+    )
+
+    # 端口就绪不等于页面就绪，这里等一等。
+    $deadline = (Get-Date).AddSeconds($WaitSeconds)
+    $rawUrl = ''
+    $waited = 0
+    while ($true) {
+        $rawUrl = ''
+        if ($Page.PSObject.Properties['url'] -and $Page.url) { $rawUrl = [string]$Page.url }
+        if ($rawUrl -and $rawUrl -ne 'about:blank') { break }
+        if ((Get-Date) -ge $deadline) { break }
+        Start-Sleep -Milliseconds 500
+        $waited += 0.5
+        # 目标对象是快照，URL 会随后续导航变化，需要重新取
+        try {
+            $again = @(Get-CdpTargets -Port $Port) |
+                Where-Object { $_.type -eq 'page' } | Select-Object -First 1
+            if ($again) { $Page = $again }
+        } catch { }
+    }
+
+    if (-not $rawUrl -or $rawUrl -eq 'about:blank') {
+        return [pscustomobject]@{
+            Loaded = $false; Url = $rawUrl; Title = ''; BodyLen = 0; Waited = $waited
+            Reason = ('等了 ' + [int]$waited + ' 秒，页面始终没有地址（启动时没能导航到目标页）')
+        }
+    }
+
+    $s = $Session
+    $own = $false
+    if (-not $s) {
+        try { $s = New-CdpSession -Page $Page -Port $Port; $own = $true }
+        catch {
+            return [pscustomobject]@{
+                Loaded = $false; Url = $rawUrl; Title = ''; BodyLen = 0
+                Reason = ('连不上页面: ' + $_.Exception.Message)
+            }
+        }
+    }
+
+    $js = @'
+(function(){
+  var b = document.body;
+  return JSON.stringify({
+    t: document.title || '',
+    n: b ? ((b.innerText || '').replace(/\s+/g,' ').trim().length) : 0
+  });
+})()
+'@
+
+    # 有地址了，再等正文渲染出来 —— 导航刚发起时正文还是空的。
+    $loaded = $false
+    $title = ''
+    $bodyLen = 0
+    $reason = ''
+    try {
+        while ($true) {
+            $r = Invoke-CdpJs -Session $s -Expression $js
+            if ($r.Error) {
+                $reason = ('读页面内容失败: ' + $r.Error)
+            } else {
+                $o = $r.Value | ConvertFrom-Json
+                $title = [string]$o.t
+                $bodyLen = [int]$o.n
+                if ($title -or $bodyLen -gt 0) { $loaded = $true; $reason = ''; break }
+            }
+            if ((Get-Date) -ge $deadline) {
+                if (-not $reason) { $reason = '页面是空白的（多半是网络不通，没能加载到内容）' }
+                break
+            }
+            Start-Sleep -Milliseconds 500
+            $waited += 0.5
+        }
+    } catch {
+        $reason = ('读页面内容失败: ' + $_.Exception.Message)
+    } finally {
+        if ($own -and $s) { try { $s.Dispose() } catch { } }
+    }
+
+    return [pscustomobject]@{
+        Loaded = $loaded; Url = $rawUrl; Title = $title; BodyLen = $bodyLen
+        Reason = $reason; Waited = $waited
+    }
+}
+
 function Get-CdpVersion {
     <#
     .SYNOPSIS
@@ -79,8 +196,22 @@ function Get-CdpTargets {
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory)][int]$Port)
+    # 注意别写成 return @(Invoke-RestMethod ...)：
+    # Invoke-RestMethod 返回的已经是数组，再套 @() 会变成"数组里装数组"，
+    # 于是每一项都成了只有一个元素的数组 ——
+    # $_.type 靠成员枚举还能读到，但 $_.PSObject.Properties['url'] 会是空，
+    # 症状是"页面明明有 URL，工具却读到空"。
+    # 正确写法：先赋值给变量，再原样输出。
+    #   错法一：return @(Invoke-RestMethod ...)  -> 数组里装数组（实测确认）
+    #   错法二：return Write-Output -NoEnumerate (...) -> 同样多一层
+    # 两种错法的症状一样：$_.type 靠成员枚举还能读到，但
+    # $_.PSObject.Properties['url'] 是空 —— 于是"页面明明有 URL，工具读到空"。
     try {
-        return @(Invoke-RestMethod -Uri ("http://127.0.0.1:{0}/json/list" -f $Port) -TimeoutSec 6)
+        $targets = Invoke-RestMethod -Uri ("http://127.0.0.1:{0}/json/list" -f $Port) -TimeoutSec 6
+        if ($null -eq $targets) { return @() }
+        # 单个元素时 ConvertFrom-Json 可能给出非数组，统一成数组
+        if ($targets -isnot [System.Array]) { $targets = @($targets) }
+        return $targets
     } catch {
         return @()
     }

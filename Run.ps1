@@ -517,6 +517,26 @@ if ($cfg.ArrangeWindows -and -not $NoArrangeWindows) {
 
 # ---- 2. 首次使用：只给指引 ----
 if ($LaunchOnly) {
+    # 浏览器起来不等于页面加载成功 —— 断网时 Chromium 只显示一片空白，
+    # 既不报错也没有标题。这里主动看一眼，免得使用者对着白窗口猜。
+    try {
+        $tab = @(Get-CdpTargets -Port $cfg.DebugPort) |
+            Where-Object { $_.type -eq 'page' } | Select-Object -First 1
+        if ($tab) {
+            $chk = Test-PageLoaded -Page $tab -Port $cfg.DebugPort -WaitSeconds 30
+            if (-not $chk.Loaded) {
+                Write-Log '浏览器窗口里是空的。' 'WARN'
+                Write-Log ('  原因：' + $chk.Reason) 'WARN'
+                Write-Log '  如果网络不通，页面就会是一片白。网络恢复后重新跑一次即可。' 'WARN'
+                Write-Log ('  当前地址: ' + $chk.Url) 'WARN'
+            } else {
+                Write-Log ('页面已加载: ' + $chk.Title) 'OK'
+            }
+        }
+    } catch {
+        Write-CdpDiag ('页面检查失败: ' + $_.Exception.Message)
+    }
+
     Write-Log '浏览器已就绪。' 'OK'
     Write-Log '在这个浏览器窗口里干这两件事：' 'OK'
     Write-Log '  1) 登录学习通' 'OK'

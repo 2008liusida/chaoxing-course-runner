@@ -60,6 +60,7 @@
         'Write-ProgressLine'
         'Clear-ProgressLine'
         'Write-ConsoleLine'
+        'Test-PageLoaded'
         'Read-RunnerConfigFile'
         'Get-RunnerSettings'
 

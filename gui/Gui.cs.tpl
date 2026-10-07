@@ -79,26 +79,37 @@ namespace ChaoxingRunner
             Font = new Font("Microsoft YaHei UI", 9F);
             BackColor = Color.FromArgb(250, 250, 250);
 
-            // ---- 顶部标题 ----
+            // ---- 顶部标题：与终端版同一份字符画 ----
+            // 用 Consolas 等宽字体渲染块状字符，字形与终端一致。
+            // 之前这里只有一行中文，在窗口里显得又小又单薄。
             Panel header = new Panel();
             header.Dock = DockStyle.Top;
-            header.Height = 62;
+            header.Height = 104;
             header.BackColor = Color.FromArgb(38, 38, 44);
             Controls.Add(header);
 
-            Label title = new Label();
-            title.Text = APP_TITLE;
-            title.ForeColor = Color.White;
-            title.Font = new Font("Microsoft YaHei UI", 13F, FontStyle.Bold);
-            title.AutoSize = true;
-            title.Location = new Point(18, 10);
-            header.Controls.Add(title);
+            Label logo = new Label();
+            logo.Text = "超星学习通 · 自动连播工具";
+            logo.ForeColor = Color.FromArgb(130, 225, 165);
+            logo.Font = new Font("Microsoft YaHei UI", 20F, FontStyle.Bold);
+            logo.AutoSize = true;
+            logo.Location = new Point(16, 12);
+            header.Controls.Add(logo);
+
+            Label tagline = new Label();
+            tagline.Text = "自动扫描未完成课节 · 逐个播放 · 播完自动进入下一节";
+            tagline.ForeColor = Color.FromArgb(175, 175, 188);
+            tagline.Font = new Font("Microsoft YaHei UI", 9F);
+            tagline.AutoSize = true;
+            tagline.Location = new Point(20, 52);
+            header.Controls.Add(tagline);
 
             Label author = new Label();
             author.Text = "by " + APP_AUTHOR + "    github.com/2008liusida/chaoxing-course-runner";
-            author.ForeColor = Color.FromArgb(160, 160, 170);
+            author.ForeColor = Color.FromArgb(140, 140, 152);
+            author.Font = new Font("Microsoft YaHei UI", 8.5F);
             author.AutoSize = true;
-            author.Location = new Point(20, 37);
+            author.Location = new Point(20, 74);
             header.Controls.Add(author);
 
             // ---- 按钮区 ----
