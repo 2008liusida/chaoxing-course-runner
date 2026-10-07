@@ -517,20 +517,73 @@ if ($cfg.ArrangeWindows -and -not $NoArrangeWindows) {
 
 # ---- 2. 首次使用：只给指引 ----
 if ($LaunchOnly) {
-    # 浏览器起来不等于页面加载成功 —— 断网时 Chromium 只显示一片空白，
-    # 既不报错也没有标题。这里主动看一眼，免得使用者对着白窗口猜。
+    # 浏览器起来不等于页面加载成功。
+    # 已知两种会造成白屏的情况：
+    #   1) 网络不通 —— Chromium 只显示一片白，不报错也没有标题
+    #   2) 渲染进程崩溃 —— CDP 报 Inspector.targetCrashed
+    # 第 2 种是间歇性的：实测四组启动参数对照都正常，说明不是某个标志
+    # 能稳定解决的。所以这里先检查，不通过就用软件渲染重启一次。
     try {
         $tab = @(Get-CdpTargets -Port $cfg.DebugPort) |
             Where-Object { $_.type -eq 'page' } | Select-Object -First 1
+
+        # 只要地址不是目标地址，就主动导航一次。
+        # 不能等它自己好：Edge 冷启动时命令行里的 URL 常常没生效，
+        # 窗口开着、地址栏空白；而且渲染进程还可能崩（实测该环境下
+        # 配置目录里会留下 Crashpad 崩溃转储）。
+        if ($tab -and $cfg.StartUrl) {
+            $cur = ''
+            if ($tab.PSObject.Properties['url'] -and $tab.url) { $cur = [string]$tab.url }
+            if ($cur -ne $cfg.StartUrl) {
+                Write-Log '正在打开学习通页面…'
+                Write-CdpDiag ('标签页地址为 [' + $cur + ']，主动导航到 ' + $cfg.StartUrl)
+                if (Invoke-CdpNavigate -Page $tab -Port $cfg.DebugPort -Url $cfg.StartUrl) {
+                    Start-Sleep -Seconds 2
+                    $tab = @(Get-CdpTargets -Port $cfg.DebugPort) |
+                        Where-Object { $_.type -eq 'page' } | Select-Object -First 1
+                }
+            }
+        }
+
         if ($tab) {
-            $chk = Test-PageLoaded -Page $tab -Port $cfg.DebugPort -WaitSeconds 30
+            $chk = Test-PageLoaded -Page $tab -Port $cfg.DebugPort -WaitSeconds 25
+
             if (-not $chk.Loaded) {
-                Write-Log '浏览器窗口里是空的。' 'WARN'
-                Write-Log ('  原因：' + $chk.Reason) 'WARN'
-                Write-Log '  如果网络不通，页面就会是一片白。网络恢复后重新跑一次即可。' 'WARN'
-                Write-Log ('  当前地址: ' + $chk.Url) 'WARN'
-            } else {
+                Write-Log '浏览器窗口是空白的，正在用软件渲染方式重试一次…' 'WARN'
+                Write-CdpDiag ('首次页面检查未通过: ' + $chk.Reason)
+
+                Stop-DebugBrowser -ProfileDir $cfg.ProfileDir | Out-Null
+                Start-Sleep -Seconds 3
+
+                if (Start-DebugBrowser -Exe $exe -Port $cfg.DebugPort `
+                        -ProfileDir $cfg.ProfileDir -StartUrl $cfg.StartUrl -SafeRender) {
+                    $tab2 = @(Get-CdpTargets -Port $cfg.DebugPort) |
+                        Where-Object { $_.type -eq 'page' } | Select-Object -First 1
+                    if ($tab2 -and $cfg.StartUrl) {
+                        $cur2 = ''
+                        if ($tab2.PSObject.Properties['url'] -and $tab2.url) { $cur2 = [string]$tab2.url }
+                        if (-not $cur2 -or $cur2 -eq 'about:blank') {
+                            [void](Invoke-CdpNavigate -Page $tab2 -Port $cfg.DebugPort -Url $cfg.StartUrl)
+                            Start-Sleep -Seconds 2
+                            $tab2 = @(Get-CdpTargets -Port $cfg.DebugPort) |
+                                Where-Object { $_.type -eq 'page' } | Select-Object -First 1
+                        }
+                    }
+                    if ($tab2) {
+                        $chk = Test-PageLoaded -Page $tab2 -Port $cfg.DebugPort -WaitSeconds 25
+                    }
+                }
+            }
+
+            if ($chk.Loaded) {
                 Write-Log ('页面已加载: ' + $chk.Title) 'OK'
+            } else {
+                Write-Log '浏览器窗口仍是空白的。' 'WARN'
+                Write-Log ('  原因：' + $chk.Reason) 'WARN'
+                Write-Log '  常见情况：网络不通（这时页面就是一片白），' 'WARN'
+                Write-Log '  或者浏览器的渲染进程起不来（虚拟机上偶发）。' 'WARN'
+                Write-Log ('  当前地址: ' + $chk.Url) 'WARN'
+                Write-Log '  可以手动在浏览器里打开学习通，或用命令行版再试。' 'WARN'
             }
         }
     } catch {

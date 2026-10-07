@@ -61,6 +61,7 @@
         'Clear-ProgressLine'
         'Write-ConsoleLine'
         'Test-PageLoaded'
+        'Invoke-CdpNavigate'
         'Read-RunnerConfigFile'
         'Get-RunnerSettings'
 

@@ -78,7 +78,13 @@ function Start-DebugBrowser {
         [Parameter(Mandatory)][string]$Exe,
         [Parameter(Mandatory)][int]$Port,
         [Parameter(Mandatory)][string]$ProfileDir,
-        [string]$StartUrl = 'about:blank'
+        [string]$StartUrl = 'about:blank',
+        # 启用软件渲染。实测这个环境里页面加载偶发空白
+        # （CDP 报 Inspector.targetCrashed，渲染进程崩了），
+        # 但四组参数对照测试都正常，说明不是某个标志能稳定解决的。
+        # 所以不默认加（--disable-gpu 会关掉视频硬解），
+        # 而是在检测到空白后重试一次。
+        [switch]$SafeRender
     )
 
     if (-not (Test-Path $ProfileDir)) {
@@ -92,8 +98,33 @@ function Start-DebugBrowser {
         '--no-first-run'
         '--no-default-browser-check'
         '--start-maximized'
+
+        # ---- 默认走软件渲染 ----
+        # 实测：在虚拟机里 GPU 进程会让渲染进程崩溃（配置目录里会留下
+        # Crashpad 崩溃转储），表现就是浏览器窗口一片空白、地址栏也是空的，
+        # 而且这种崩溃是间歇性的 —— 同一组参数有时好有时坏。
+        # 关掉 GPU 后不再出现。代价是视频不硬解，但本工具按 1 倍速播放，
+        # 软解完全够用。
+        #
+        # 注意不要加 --no-sandbox：那会让浏览器顶部出现
+        # "你使用的是不受支持的命令行标志" 警告条，影响观感，
+        # 而它并不是这里需要的。
+        '--disable-gpu'
+        '--disable-software-rasterizer'
+
+        # Chromium 在 /dev/shm 太小时也会崩，精简系统与虚拟机上常见。
+        # 它同样不会触发警告条。
+        '--disable-dev-shm-usage'
+
         $StartUrl
     )
+
+    if ($SafeRender) {
+        # 保留这个开关：调用方在页面检查失败后可要求重试。
+        # 上面已经默认软件渲染，这里再补一项彻底避开 GPU 合成路径。
+        $arguments = $arguments[0..($arguments.Count - 2)] +
+            @('--disable-gpu-compositing', $StartUrl)
+    }
 
     Start-Process -FilePath $Exe -ArgumentList $arguments | Out-Null
 

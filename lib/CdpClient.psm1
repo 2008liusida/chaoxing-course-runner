@@ -57,6 +57,64 @@ function Write-CdpDiag {
 # ---------------------------------------------------------------- HTTP 接口
 
 
+
+function Invoke-CdpNavigate {
+    <#
+    .SYNOPSIS
+        让某个标签页主动导航到指定地址。
+    .DESCRIPTION
+        为什么需要它：Edge 启动时虽然把 URL 写在命令行里，但冷启动时
+        常常没有照做 —— 窗口开着、地址栏空白、页面 url 为空。
+        这时不能等，要自己发一条 Page.navigate。
+
+        这是"浏览器起来了但页面白屏"最可靠的对策：
+        不依赖浏览器怎么解析命令行参数。
+    .PARAMETER Page
+        Get-CdpTargets 返回的标签页。
+    .PARAMETER Port
+        调试端口。
+    .PARAMETER Url
+        目标地址。
+    .OUTPUTS
+        Boolean：成功发出导航返回 $true。
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$Page,
+        [Parameter(Mandatory)][int]$Port,
+        [Parameter(Mandatory)][string]$Url
+    )
+
+    if (-not $Page.webSocketDebuggerUrl) { return $false }
+
+    try {
+        $ws = New-Object System.Net.WebSockets.ClientWebSocket
+        $ws.ConnectAsync([Uri]$Page.webSocketDebuggerUrl,
+            [System.Threading.CancellationToken]::None).Wait(10000) | Out-Null
+        if ($ws.State -ne [System.Net.WebSockets.WebSocketState]::Open) {
+            Write-CdpDiag 'Invoke-CdpNavigate: WebSocket 没连上'
+            return $false
+        }
+
+        # 用 CDP 的 JSON 转义规则处理 URL 里的特殊字符
+        $safe = ConvertTo-JsLiteral -Value $Url
+        $msg = '{"id":1,"method":"Page.navigate","params":{"url":"' + $safe + '"}}'
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($msg)
+        $ws.SendAsync(
+            (New-Object System.ArraySegment[byte] -ArgumentList @(, $bytes)),
+            [System.Net.WebSockets.WebSocketMessageType]::Text, $true,
+            [System.Threading.CancellationToken]::None).Wait(8000) | Out-Null
+
+        # 不等响应体：导航一旦发出就够，后续用 Test-PageLoaded 判断结果
+        Start-Sleep -Milliseconds 300
+        $ws.Dispose()
+        return $true
+    } catch {
+        Write-CdpDiag ('Invoke-CdpNavigate 失败: ' + $_.Exception.Message)
+        return $false
+    }
+}
+
 function Test-PageLoaded {
     <#
     .SYNOPSIS
@@ -112,7 +170,8 @@ function Test-PageLoaded {
     if (-not $rawUrl -or $rawUrl -eq 'about:blank') {
         return [pscustomobject]@{
             Loaded = $false; Url = $rawUrl; Title = ''; BodyLen = 0; Waited = $waited
-            Reason = ('等了 ' + [int]$waited + ' 秒，页面始终没有地址（启动时没能导航到目标页）')
+            Reason = ('等了 ' + [int]$waited + ' 秒，页面始终没有地址' +
+                      '（导航没发生，或渲染进程崩了 —— 浏览器窗口会是白屏）')
         }
     }
 
@@ -177,11 +236,15 @@ function Test-PageLoaded {
         if ($own -and $s) { try { $s.Dispose() } catch { } }
     }
 
+    # 判据要严：只有"地址有了、正文也确认到了"才算加载成功。
+    # 之前放得太宽（有地址就算成功，甚至地址为空也算），
+    # 结果空白页被当成成功 —— 日志打出"页面已加载: "后面是空的，
+    # 上层的重试逻辑因此永远不触发。
     if (-not $loaded) {
-        # 有 URL 就算导航成功 —— 正文读不到多半只是还在加载，
-        # 不该因此告诉使用者"页面是空的"。
-        $loaded = $true
-        if (-not $reason) { $reason = '有地址，但没能确认正文（页面可能还在加载）' }
+        if (-not $reason) {
+            if ($rawUrl) { $reason = '有地址，但读不到正文（页面可能还在加载）' }
+            else { $reason = '页面没有地址也没有正文（导航没发生或渲染进程崩了）' }
+        }
     }
 
     return [pscustomobject]@{
