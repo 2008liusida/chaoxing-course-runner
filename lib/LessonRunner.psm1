@@ -101,16 +101,17 @@ function Invoke-Lesson {
     $lastMilestoneMin = -1
 
     while ((Get-Date) -lt $deadline) {
+        $videoCtx = Get-VideoContext -Session $Session -Selectors $Selectors
+
         # 保证页面可见：Chromium 在页面 hidden 时不允许加载/播放视频。
-        # 只在需要时调用（bringToFront 会让目标标签成为活动标签）。
+        # 传入 VideoContextId 后，函数会先只读可见性 —— 正常情况直接返回，
+        # 不抢前台也不等待；只有确实 hidden 时才恢复窗口与激活标签。
         if ($Settings.KeepForeground) {
-            $vis = Enable-LessonVideoPlayback -Session $Session -WindowHandle $WindowHandle
+            $vis = Enable-LessonVideoPlayback -Session $Session -WindowHandle $WindowHandle -VideoContextId $videoCtx
             if (-not $vis.Ok) {
                 Say ("页面当前不可见（" + $vis.TopVisible + "），视频可能无法加载；已尝试恢复窗口与激活标签") 'WARN'
             }
         }
-
-        $videoCtx = Get-VideoContext -Session $Session -Selectors $Selectors
 
         # ---- 没有视频帧：可能是非视频课节，也可能页面没加载好 ----
         if ($videoCtx -le 0) {

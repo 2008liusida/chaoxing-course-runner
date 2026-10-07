@@ -79,6 +79,22 @@ function Enable-LessonVideoPlayback {
         Ok              = $false
     }
 
+    # ---- 0. 先只读可见性 ----
+    # 已经可见就立刻返回：不抢前台、不激活标签、不 sleep。
+    # 这一步很重要 —— 本函数会被播放循环每轮调用，
+    # 若无条件执行下面的窗口操作，会每秒把浏览器抢到前台（终端没法用），
+    # 而且每次带 1.5 秒固定等待，把轮询间隔从 1 秒拖成 2.5 秒。
+    if ([int]$VideoContextId -gt 0) {
+        $topNow = Get-PageVisibility -Session $Session -ContextId 0
+        $frameNow = Get-PageVisibility -Session $Session -ContextId $VideoContextId
+        if ($topNow -eq 'visible' -and $frameNow -eq 'visible') {
+            $result.TopVisible = $topNow
+            $result.FrameVisible = $frameNow
+            $result.Ok = $true
+            return $result
+        }
+    }
+
     # ---- 1. 窗口级：恢复 + 前台 ----
     if ($WindowHandle -ne [IntPtr]::Zero) {
         try {
@@ -93,7 +109,8 @@ function Enable-LessonVideoPlayback {
                 Start-Sleep -Milliseconds 600
             }
             [void][CcrVis.Win]::SetForegroundWindow($WindowHandle)
-            Start-Sleep -Milliseconds 400
+            # 只在确实需要恢复时等待，轮询路径不会走到这里
+            Start-Sleep -Milliseconds 300
         } catch {
             Write-CdpDiag ("窗口恢复失败: " + $_.Exception.Message)
         }
@@ -106,8 +123,6 @@ function Enable-LessonVideoPlayback {
     } catch {
         Write-CdpDiag ("Page.bringToFront 失败: " + $_.Exception.Message)
     }
-
-    Start-Sleep -Milliseconds 500
 
     # ---- 3. 复核 ----
     $result.TopVisible = Get-PageVisibility -Session $Session -ContextId 0
