@@ -28,6 +28,7 @@ Import-Module (Join-Path $PSScriptRoot 'CdpClient.psm1') -Force -DisableNameChec
 
 Add-Type -Namespace CcrVis -Name Win -MemberDefinition @'
 [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
+[DllImport("user32.dll")] public static extern bool IsZoomed(IntPtr h);
 [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);
 [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
 [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
@@ -336,6 +337,20 @@ function Set-WindowHalf {
     $wa = Get-ScreenWorkArea
     if (-not $wa) { return $result }
 
+    # 先取消最大化/最小化 —— 否则 SetWindowPos 对窗口位置无效。
+    # 浏览器启动时常见会恢复成最大化，不处理的话布局会被无声忽略。
+    try {
+        if ([CcrVis.Win]::IsIconic($Handle)) {
+            [void][CcrVis.Win]::ShowWindow($Handle, 9)    # SW_RESTORE
+            Start-Sleep -Milliseconds 200
+        } elseif ([CcrVis.Win]::IsZoomed($Handle)) {
+            [void][CcrVis.Win]::ShowWindow($Handle, 9)    # SW_RESTORE：取消最大化
+            Start-Sleep -Milliseconds 200
+        }
+    } catch {
+        Write-CdpDiag ('取消最大化失败: ' + $_.Exception.Message)
+    }
+
     $ins = Get-WindowFrameInsets -Handle $Handle
     $result.InsetSource = $ins.Source
 
@@ -367,6 +382,107 @@ function Set-WindowHalf {
     }
 
     $result.Ok = $true
+    return $result
+}
+
+
+function Set-TerminalWindowPlacement {
+    <#
+    .SYNOPSIS
+        把当前终端窗口摆到屏幕左半或右半。
+    .DESCRIPTION
+        单独抽出来是为了能分两步布局：
+          · 启动时浏览器还没起，只能先摆终端（让启动输出落在正确位置）
+          · 浏览器就绪后再摆浏览器，并复核终端位置
+        找不到终端窗口时返回 $false，不抛异常 —— 布局失败不该影响主流程。
+    .PARAMETER Side
+        摆哪一半，默认 'right'。
+    .OUTPUTS
+        Boolean
+    #>
+    [CmdletBinding()]
+    param([ValidateSet('left', 'right')][string]$Side = 'right')
+
+    try {
+        $h = Get-TerminalWindowHandle
+        if ($h -eq [IntPtr]::Zero) { return $false }
+        return (Set-WindowHalf -Handle $h -Side $Side).Ok
+    } catch {
+        Write-CdpDiag ('终端窗口摆放失败: ' + $_.Exception.Message)
+        return $false
+    }
+}
+
+
+function Arrange-WindowsVerified {
+    <#
+    .SYNOPSIS
+        摆好窗口并校验，不符就重设。
+    .DESCRIPTION
+        浏览器刚启动时会恢复上一次的窗口状态（常见是最大化），
+        这个过程是异步的，可能把刚摆好的位置覆盖掉。
+        所以摆完必须回读校验，不符就再设一次，最多试 $Attempts 轮。
+
+        校验依据：窗口的**可见边界**是否落在预期半屏内（留少量容差，
+        因为部分窗口有最小宽度限制，不可能精确到像素）。
+    .PARAMETER BrowserHandle
+        浏览器窗口句柄；[IntPtr]::Zero 时只摆终端。
+    .PARAMETER BrowserSide
+        浏览器放哪一侧，默认 'left'。
+    .PARAMETER Attempts
+        最多尝试几轮，默认 4。
+    .PARAMETER DelayMs
+        每轮之间的等待毫秒数，默认 700（给浏览器时间完成状态恢复）。
+    .OUTPUTS
+        PSCustomObject：@{ Ok; Attempts; BrowserVisible; TerminalOk }
+    #>
+    [CmdletBinding()]
+    param(
+        [IntPtr]$BrowserHandle = [IntPtr]::Zero,
+        [ValidateSet('left', 'right')][string]$BrowserSide = 'left',
+        [int]$Attempts = 4,
+        [int]$DelayMs = 700
+    )
+
+    $wa = Get-ScreenWorkArea
+    $result = [pscustomobject]@{
+        Ok = $false; Attempts = 0; BrowserVisible = ''; TerminalOk = $false
+    }
+    if (-not $wa) { return $result }
+
+    $half = [int]($wa.Width / 2)
+    # 容差：允许 24px 偏差（窗口最小宽度、边框取整等）
+    $tol = 24
+
+    for ($i = 1; $i -le $Attempts; $i++) {
+        $result.Attempts = $i
+
+        if ($BrowserHandle -ne [IntPtr]::Zero) {
+            $null = Set-WindowHalf -Handle $BrowserHandle -Side $BrowserSide
+        }
+        $result.TerminalOk = Set-TerminalWindowPlacement -Side $(if ($BrowserSide -eq 'left') { 'right' } else { 'left' })
+
+        Start-Sleep -Milliseconds $DelayMs
+
+        if ($BrowserHandle -eq [IntPtr]::Zero) { $result.Ok = $true; break }
+
+        # 校验浏览器可见边界是否落在预期的半屏
+        $wr = New-Object CcrVis.Win+RECT
+        if (-not [CcrVis.Win]::GetWindowRect($BrowserHandle, [ref]$wr)) { continue }
+        $ins = Get-WindowFrameInsets -Handle $BrowserHandle
+        $visL = $wr.Left + $ins.Left
+        $visR = $wr.Right - $ins.Right
+        $result.BrowserVisible = ('L=' + $visL + ' R=' + $visR + ' 宽=' + ($visR - $visL))
+
+        $wantL = if ($BrowserSide -eq 'left') { $wa.Left } else { $wa.Left + $half }
+        $wantR = if ($BrowserSide -eq 'left') { $wa.Left + $half } else { $wa.Left + $wa.Width }
+
+        if ([math]::Abs($visL - $wantL) -le $tol -and [math]::Abs($visR - $wantR) -le $tol) {
+            $result.Ok = $true
+            break
+        }
+    }
+
     return $result
 }
 
@@ -411,4 +527,4 @@ function Arrange-Windows {
     return $result
 }
 
-Export-ModuleMember -Function Get-PageVisibility, Enable-LessonVideoPlayback, Get-ScreenWorkArea, Get-TerminalWindowHandle, Get-WindowFrameInsets, Set-WindowHalf, Arrange-Windows
+Export-ModuleMember -Function Get-PageVisibility, Enable-LessonVideoPlayback, Get-ScreenWorkArea, Get-TerminalWindowHandle, Get-WindowFrameInsets, Set-WindowHalf, Set-TerminalWindowPlacement, Arrange-Windows, Arrange-WindowsVerified

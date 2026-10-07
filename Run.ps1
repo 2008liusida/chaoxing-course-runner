@@ -418,16 +418,16 @@ function Build-LessonQueue {
 
 Write-Log '=== 超星学习通 · 自动连播工具 启动 ===' 'INFO' -FileOnly
 try { Clear-Host } catch { }
-# ---------------- 启动布局：浏览器一侧、终端另一侧 ----------------
+# ---------------- 布局第一步：先把终端摆到右半屏 ----------------
+# 此时浏览器还没启动，只能摆终端。
+# 先摆的好处是：接下来打印的启动信息立刻落在正确位置，不会先左后右地跳。
 if ($cfg.ArrangeWindows) {
     try {
-        $layoutBrowser = Get-BrowserWindowHandle
-        $lay = Arrange-Windows -BrowserHandle $layoutBrowser
-        if (-not $lay.Terminal) {
+        if (-not (Set-TerminalWindowPlacement -Side 'right')) {
             Write-Log '终端窗口没摆成（找不到窗口句柄），你可以手动拖一下' 'WARN'
         }
     } catch {
-        Write-CdpDiag ('启动布局失败: ' + $_.Exception.Message)
+        Write-CdpDiag ('终端窗口摆放失败: ' + $_.Exception.Message)
     }
 }
 
@@ -489,6 +489,22 @@ if ($version) {
     $version = Get-CdpVersion -Port $cfg.DebugPort
 }
 Write-Log "已连接: $($version.Browser)"
+
+# ---------------- 布局第二步：浏览器已就绪，摆到左半屏 ----------------
+# 浏览器必须等启动完才有窗口句柄，所以放在这里。
+# 用带校验的版本：浏览器启动后会异步恢复上次的窗口状态（常见是最大化），
+# 可能把刚摆好的位置覆盖掉，所以摆完要回读核对、不符就重设。
+if ($cfg.ArrangeWindows) {
+    try {
+        $layoutBrowser = Get-BrowserWindowHandle
+        $lay = Arrange-WindowsVerified -BrowserHandle $layoutBrowser -BrowserSide 'left'
+        if (-not $lay.Ok) {
+            Write-Log ('窗口没摆到位（试了 ' + $lay.Attempts + ' 轮，浏览器 ' + $lay.BrowserVisible + '），你可以手动拖一下') 'WARN'
+        }
+    } catch {
+        Write-CdpDiag ('浏览器布局失败: ' + $_.Exception.Message)
+    }
+}
 
 # ---- 2. 首次使用：只给指引 ----
 if ($LaunchOnly) {

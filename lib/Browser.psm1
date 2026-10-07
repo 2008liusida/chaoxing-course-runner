@@ -130,11 +130,13 @@ function Stop-DebugBrowser {
 function Get-BrowserWindowHandle {
     <#
     .SYNOPSIS
-        取一个可用的浏览器主窗口句柄，用于 SetForegroundWindow。
+        取浏览器真正的主窗口句柄。用于窗口布局与置前。
     .OUTPUTS
         IntPtr；找不到返回 [IntPtr]::Zero。
     .NOTES
-        取句柄值最大的那个，通常是主窗口而不是后台小窗。
+        按窗口面积取最大的可见窗口 —— 浏览器进程里还有隐藏辅助窗口
+        （坐标常在 -25600、尺寸极小），只看句柄大小会选错。
+        枚举失败时退回"句柄最大的进程主窗口"。
     #>
     [CmdletBinding()]
     param()
@@ -167,6 +169,17 @@ if (-not ('Ccr.NativeMethods' -as [type])) {
     Add-Type -Namespace Ccr -Name NativeMethods -MemberDefinition @'
 [DllImport("user32.dll", SetLastError = true)]
 public static extern bool SetForegroundWindow(IntPtr hWnd);
+
+// 以下用于按窗口面积挑出浏览器真正的主窗口。
+// 浏览器进程里还有隐藏辅助窗口（常在 -25600 坐标、尺寸极小），
+// 按句柄大小挑会选错。
+[DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc cb, IntPtr param);
+[DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+[DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+[DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
+[DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT rect);
+public delegate bool EnumProc(IntPtr h, IntPtr param);
+public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
 '@
 }
 

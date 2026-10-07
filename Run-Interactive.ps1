@@ -235,19 +235,15 @@ function Get-AnyCourseTab {
 # ================================================================
 
 Clear-Host
-# ---------------- 启动布局：浏览器一侧、终端另一侧 ----------------
-# 摆好之后两者都看得见，且不需要抢前台 ——
-# Chromium 只要求窗口可见，不要求它在最前。
-# 失败不影响主流程（比如终端由未知宿主托管时找不到窗口句柄）。
+# ---------------- 布局第一步：先把终端摆到右半屏 ----------------
+# 此时浏览器还没启动，只能摆终端；先摆可以让启动信息落在正确位置。
 if ($cfg.ArrangeWindows) {
     try {
-        $layoutBrowser = Get-BrowserWindowHandle
-        $lay = Arrange-Windows -BrowserHandle $layoutBrowser
-        if (-not $lay.Terminal) {
+        if (-not (Set-TerminalWindowPlacement -Side 'right')) {
             Write-Info '终端窗口没摆成（找不到窗口句柄），你可以手动拖一下'
         }
     } catch {
-        Write-CdpDiag ('启动布局失败: ' + $_.Exception.Message)
+        Write-CdpDiag ('终端窗口摆放失败: ' + $_.Exception.Message)
     }
 }
 
@@ -314,6 +310,21 @@ if ($version) {
     $version = Get-CdpVersion -Port $cfg.DebugPort
 }
 Write-Good ('浏览器就绪: ' + $version.Browser)
+
+# ---------------- 布局第二步：浏览器已就绪，摆到左半屏 ----------------
+# 浏览器必须等启动完才有窗口句柄，所以放在这里。
+# 用带校验的版本：浏览器会异步恢复上次的窗口状态，可能覆盖掉布局。
+if ($cfg.ArrangeWindows) {
+    try {
+        $layoutBrowser = Get-BrowserWindowHandle
+        $lay = Arrange-WindowsVerified -BrowserHandle $layoutBrowser -BrowserSide 'left'
+        if (-not $lay.Ok) {
+            Write-Info ('窗口没摆到位（试了 ' + $lay.Attempts + ' 轮），你可以手动拖一下')
+        }
+    } catch {
+        Write-CdpDiag ('浏览器布局失败: ' + $_.Exception.Message)
+    }
+}
 
 # ---------------- 步骤 2：等待用户登录并确认 ----------------
 Write-Step 2 4 '登录学习通'

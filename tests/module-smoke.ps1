@@ -163,7 +163,11 @@ foreach ($wf in $win32Files) {
     foreach ($m in [regex]::Matches($wc, 'public static extern [\w\.]+ (\w+)\s*\(')) {
         $declared[$m.Groups[1].Value] = $true
     }
-    foreach ($m in [regex]::Matches($wc, '(?:CcrVis|Ccr|NativeMethods)\.Win\]::(\w+)')) {
+    # 匹配本项目自己的 P/Invoke 类：形如 [Ccr.Xxx]::Method 或 [CcrVis.Win]::Method。
+    # 不能用更宽的 [任意类]::方法 —— 那会把 [IntPtr]::Zero、[math]::Abs 也算进来。
+    # 也不能限定单一类名 —— 之前限定过 CcrVis|Ccr|NativeMethods 的固定组合，
+    # 结果漏掉了误写成别的类的调用。
+    foreach ($m in [regex]::Matches($wc, '\[Ccr[\w\.]*\]::(\w+)')) {
         $name = $m.Groups[1].Value
         if (-not $declared.ContainsKey($name)) {
             $declMissing += ((Split-Path $wf -Leaf) + ':' + $name)
