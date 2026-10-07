@@ -1,22 +1,25 @@
 @echo off
-chcp 65001 >nul
+rem ============================================================
+rem  ClearCache.bat - clear browser cache
+rem
+rem  The tool accumulates browser data under browser-profile.
+rem  Most of it is Edge's own page cache and is unrelated to this
+rem  tool. Double-click this file to reclaim the space.
+rem
+rem  Usage:
+rem    double-click        clear cache only (keeps the profile)
+rem    ClearCache.bat -All delete the whole profile directory
+rem
+rem  The script closes the tool's own browser instance first
+rem  (matched by profile path - your daily browser is untouched).
+rem
+rem  Do not run this while the tool is playing: the running
+rem  lesson will be interrupted.
+rem
+rem  This file is intentionally ASCII-only (see Run-Interactive.bat).
+rem ============================================================
+
 setlocal
-
-rem ============================================================
-rem  ClearCache.bat - 清理浏览器缓存
-rem
-rem  工具运行会在 browser-profile 里累积浏览器数据，用久了
-rem  可达数百 MB（绝大部分是 Edge 的网页缓存，与工具无关）。
-rem  双击本文件即可清理。
-rem
-rem  用法：
-rem    双击            清理缓存（保留浏览器配置）
-rem    -All            连整个配置目录一起删除
-rem
-rem  清理会先关闭工具专用的浏览器实例，不影响你日常用的浏览器。
-rem  运行中请勿清理 —— 正在刷的课会中断。
-rem ============================================================
-
 set "HERE=%~dp0"
 set "PS=powershell.exe"
 where pwsh.exe >nul 2>nul

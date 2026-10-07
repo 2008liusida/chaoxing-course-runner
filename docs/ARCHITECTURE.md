@@ -4,10 +4,9 @@
 
 ```
 chaoxing-runner/
-├─ Run-Interactive.bat           交互式入口（推荐，逐步引导）
-├─ Run-Interactive.ps1           交互式流程编排
-├─ Start.bat                     直接开跑（需要引导时也会停下来问）
-├─ Run.ps1                       非交互式流程编排
+├─ Start.bat                     主入口（双击即用）
+├─ Run.ps1                       主流程编排
+├─ Run-Interactive.ps1           交互式流程编排（分步骤引导，可选）
 ├─ Diagnose.bat                  环境自检（跑不起来时先双击这个）
 ├─ ClearCache.bat                清理浏览器缓存
 ├─ first-run-login.bat           只启动浏览器并给出指引（可选）

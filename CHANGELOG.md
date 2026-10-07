@@ -47,6 +47,20 @@
   移除"已登录过则自动跳过""下次不用重新登录"等表述，
   改为如实说明"不保证跨次运行保留登录态，每次请正常登录"
 
+### 修复
+
+- **批处理入口在部分环境下无法运行**
+  批处理文件对非 ASCII 字符的解码依赖控制台代码页，
+  带 UTF-8 BOM 或含中文注释时会出现「命令无法识别」与乱码。
+  现所有 `.bat` 统一为**纯 ASCII + CRLF + 无 BOM**，
+  中文输出全部由 PowerShell 脚本负责
+
+### 变更
+
+- 移除 `Run-Interactive.bat`。日常只需 `Start.bat`；
+  需要分步骤引导时改用
+  `powershell -NoProfile -ExecutionPolicy Bypass -File Run-Interactive.ps1`
+
 ### 已知限制
 
 - 不保证跨次运行保留登录态
@@ -65,7 +79,7 @@
     完成判据看状态圆点 `span.roundpoint`
   - `mooc2`：`mooc1.chaoxing.com`（URL 带 `mooc2=1`），课节为 `div.posCatalog_select`，
     完成判据看 `input.jobUnfinishCount`，课程目录位于 iframe 内
-- **交互式入口** `Run-Interactive.bat`：逐步引导，每步停下来等使用者确认
+- **交互式入口** `Start.bat`：逐步引导，每步停下来等使用者确认
 - **引导式登录与选课**：未登录时自动打开登录页并等待，登录后自动跳转课程列表；
   未打开课程页时提示进入具体课程（2.1.0 起改为静默等待）
 - **单条进度条**：`████████░░░░ 68%  12:34 / 18:20`，就地刷新

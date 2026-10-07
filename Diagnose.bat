@@ -1,29 +1,24 @@
 @echo off
-chcp 65001 >nul
-setlocal
-
 rem ============================================================
-rem  Diagnose.bat - 环境自检
+rem  Diagnose.bat - environment self-check
 rem
-rem  跑不起来时先双击这个，把窗口里的全部内容复制下来。
-rem  它不会修改任何东西，只读检查。
+rem  Run this first when the tool will not start.
+rem
+rem  It checks: file presence, Mark-of-the-Web flags, execution
+rem  policy, browser availability, port occupancy, script BOM,
+rem  and whether the module loads.
+rem
+rem  This file is intentionally ASCII-only (see Run-Interactive.bat).
 rem ============================================================
 
+setlocal
 set "HERE=%~dp0"
 set "PS=powershell.exe"
 where pwsh.exe >nul 2>nul
 if %errorlevel%==0 set "PS=pwsh.exe"
 
-echo ============================================================
-echo  ChaoxingCourseRunner 环境自检
-echo ============================================================
-echo.
-
-"%PS%" -NoProfile -ExecutionPolicy Bypass -File "%HERE%tests\diagnose-env.ps1"
+"%PS%" -NoProfile -ExecutionPolicy Bypass -File "%HERE%tests\diagnose-env.ps1" %*
 
 echo.
-echo ============================================================
-echo  自检结束。请把上面的内容复制给维护者。
-echo ============================================================
 pause
 endlocal

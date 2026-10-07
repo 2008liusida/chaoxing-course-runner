@@ -26,12 +26,12 @@
 
 **双击 `Start.bat`**，然后跟着终端提示走。
 
-两个入口都能用，区别只在提示的详细程度：
+日常用 `Start.bat` 即可。需要分步骤引导时（首次使用、排查问题），
+可改用 `Run-Interactive.ps1`：
 
-| 入口 | 特点 |
-|---|---|
-| `Start.bat` | **推荐**。流程简洁，适合日常 |
-| `Run-Interactive.bat` | 分步骤引导，首次使用或排查问题时更直观 |
+```
+powershell -NoProfile -ExecutionPolicy Bypass -File Run-Interactive.ps1
+```
 
 两者用的是同一套逻辑与配置，跑起来后的行为完全一致。
 
@@ -183,7 +183,7 @@ by liusida   github.com/2008liusida/chaoxing-course-runner
 ### 想只跑几节试试
 
 ```
-Run-Interactive.bat -MaxLessons 2
+Start.bat -MaxLessons 2
 ```
 
 ### 每次都要重新登录？
@@ -199,7 +199,7 @@ Run-Interactive.bat -MaxLessons 2
 ### 中途断网了
 
 工具会在连续 3 节失败后**自动停止**并提示原因，不会长时间无响应。恢复网络后重新双击
-`Run-Interactive.bat` 即可续跑，已完成的课节不会重刷。
+`Start.bat` 即可续跑，已完成的课节不会重刷。
 
 > 说明：切课阶段设有 4 分钟上限，主循环设有"连续 3 节失败即停"，
 > 因此环境异常时工具会在几分钟内退出，而不是一直重试。
@@ -222,12 +222,12 @@ Run-Interactive.bat -MaxLessons 2
 默认会保持浏览器可见（这是视频能播放的前提）。若你希望提示阶段不抢焦点：
 
 ```
-Run-Interactive.bat -NoForeground
+Start.bat -NoForeground
 ```
 
 ### 想换一个课程
 
-直接重新跑 `Run-Interactive.bat`，在浏览器里打开另一门课就行。工具以**你当前打开的页面**为准。
+直接重新跑 `Start.bat`，在浏览器里打开另一门课就行。工具以**你当前打开的页面**为准。
 
 ---
 
@@ -291,7 +291,7 @@ Run-Interactive.bat -NoForeground
 
 ## 参数说明
 
-在 `Run-Interactive.bat` 后面加参数即可：
+在 `Start.bat` 后面加参数即可：
 
 | 参数 | 作用 |
 |---|---|
