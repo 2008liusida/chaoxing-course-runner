@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>knowledge/cards（测试夹具 · 内容层）</title>
+<style>body{font-family:"Microsoft Yahei",sans-serif;margin:6px;font-size:13px} .ans-job-icon{display:inline-block;width:12px;height:12px;background:#e67e22;border-radius:50%} .ans-job-icon.clear{background:#e67e22} .ans-job-icon.done{background:#2ecc71}</style>
+</head>
+<body>
+  <div class="ans-job-icon ans-job-video ans-job-icon-clear" id="jobIcon"></div>
+  <div id="cond">完成条件：观看时长需 ≥ 总时长的 100%</div>
+  <div id="txt">内容层</div>
+  <iframe id="vplayer" width="600" height="340" src="player.html"></iframe>
+
+<script>
+  var params = new URLSearchParams(location.search);
+  var chapter = params.get('chapter') || '1222994220';
+  var dur = params.get('dur') || '8';
+  document.getElementById('vplayer').src = '../ananas/modules/video/index.html?chapter=' + chapter + '&dur=' + dur;
+  document.getElementById('txt').textContent = '内容层 · 课节 ' + chapter;
+
+  // 播放器层播完后调用这里，模拟超星登记任务点完成
+  window.finishJob = function () {
+    var icon = document.getElementById('jobIcon');
+    icon.className = 'ans-job-icon ans-job-video ans-job-icon-full';
+    var d = document.createElement('div');
+    d.className = 'ans-job-finished';
+    d.textContent = '任务点已完成';
+    document.body.appendChild(d);
+    try { parent.markDone(chapter); } catch (e) { }
+  };
+</script>
+</body>
+</html>

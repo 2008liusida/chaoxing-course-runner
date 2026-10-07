@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>ananas/modules/video（测试夹具 · 播放器层）</title>
+<style>body{font-family:"Microsoft Yahei",sans-serif;margin:6px;font-size:13px}video{background:#000;width:560px;height:300px}</style>
+</head>
+<body>
+  <div id="hdr">播放器层</div>
+  <video id="v" controls playsinline></video>
+  <div id="info">waiting</div>
+
+<script>
+  var params = new URLSearchParams(location.search);
+  var chapter = params.get('chapter') || '1222994220';
+  var wantDur = parseFloat(params.get('dur') || '8');
+  var v = document.getElementById('v');
+  var info = document.getElementById('info');
+  var done = false;
+
+  // 用 canvas 生成一段真实可播放的视频流（MediaRecorder -> webm blob）
+  function makeStream() {
+    var cv = document.createElement('canvas');
+    cv.width = 320; cv.height = 180;
+    var ctx = cv.getContext('2d');
+    var t0 = Date.now();
+    function draw() {
+      var t = (Date.now() - t0) / 1000;
+      ctx.fillStyle = 'hsl(' + ((t * 40) % 360) + ',60%,35%)';
+      ctx.fillRect(0, 0, 320, 180);
+      ctx.fillStyle = '#fff';
+      ctx.font = '20px sans-serif';
+      ctx.fillText('课节 ' + chapter, 20, 60);
+      ctx.fillText(t.toFixed(1) + 's', 20, 100);
+      requestAnimationFrame(draw);
+    }
+    draw();
+    return cv.captureStream(25);
+  }
+
+  try {
+    var stream = makeStream();
+    var rec = new MediaRecorder(stream, { mimeType: 'video/webm' });
+    var chunks = [];
+    rec.ondataavailable = function (e) { if (e.data.size) { chunks.push(e.data); } };
+    rec.onstop = function () {
+      var blob = new Blob(chunks, { type: 'video/webm' });
+      v.src = URL.createObjectURL(blob);
+      info.textContent = '准备就绪，时长约 ' + wantDur + ' 秒';
+    };
+    rec.start();
+    setTimeout(function () { rec.stop(); }, Math.max(1000, wantDur * 1000));
+  } catch (e) {
+    info.textContent = 'MediaRecorder 不可用: ' + e.message;
+  }
+
+  v.addEventListener('play', function () { info.textContent = 'playing'; });
+  v.addEventListener('ended', function () {
+    if (done) { return; }
+    done = true;
+    info.textContent = 'ended -> 通知内容层';
+    try { parent.finishJob(); } catch (e) { }
+  });
+</script>
+</body>
+</html>

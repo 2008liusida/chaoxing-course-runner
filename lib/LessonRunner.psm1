@@ -1,0 +1,266 @@
+﻿<#
+    教案：课节处理状态机。
+
+    从 Run.ps1 抽出来的原因：
+      Run.ps1（非交互）与 Run-Interactive.ps1（交互）都要用它。
+      两份实现必然失同步，所以放一条。
+
+    依赖注入：-Selectors（选择器表）由调用方传入，
+    本模块不自己去找 Selectors.psd1。
+#>
+
+Set-StrictMode -Version Latest
+Import-Module (Join-Path $PSScriptRoot 'CdpClient.psm1') -Force -DisableNameChecking
+Import-Module (Join-Path $PSScriptRoot 'Chaoxing.psm1') -Force -DisableNameChecking
+Import-Module (Join-Path $PSScriptRoot 'Video.psm1') -Force -DisableNameChecking
+Import-Module (Join-Path $PSScriptRoot 'PageVisibility.psm1') -Force -DisableNameChecking
+Import-Module (Join-Path $PSScriptRoot 'Logging.psm1') -Force -DisableNameChecking
+
+function Invoke-Lesson {
+    <#
+    .SYNOPSIS
+        处理单节课：切课 -> 播放 -> 等平台登记完成 -> 返回结果。
+    .PARAMETER Session
+        CDP 会话（课程页顶层）。
+    .PARAMETER Lesson
+        课节对象，需含 Id 与 Title。
+    .PARAMETER Selectors
+        选择器表。
+    .PARAMETER Settings
+        设置对象（取 PlaybackRate / PollSeconds / MaxReplayPerLesson /
+        MaxWaitMinutesPerLesson / KeepForeground / SwitchMode）。
+    .PARAMETER WindowHandle
+        浏览器窗口句柄，用于保持前台。
+    .PARAMETER Log
+        日志脚本块，签名 param($Message, $Level)。
+    .OUTPUTS
+        Boolean：$true = 已确认完成。
+    .NOTES
+        所有失败路径都是"记日志 + 返回 $false"，不抛异常 ——
+        一节课出问题不应该中断整批任务。
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$Session,
+        [Parameter(Mandatory)]$Lesson,
+        [Parameter(Mandatory)][hashtable]$Selectors,
+        [Parameter(Mandatory)]$Settings,
+        [IntPtr]$WindowHandle = [IntPtr]::Zero,
+        [Parameter(Mandatory)][scriptblock]$Log
+    )
+
+    function Say {
+        param([string]$m, [string]$lv = 'INFO', [switch]$Transient, [switch]$FileOnly)
+        if ($FileOnly) { & $Log $m $lv -FileOnly }
+        elseif ($Transient) { & $Log $m $lv -Transient }
+        else { & $Log $m $lv }
+    }
+
+    Say ('------ 课节 ' + $Lesson.Id + ' 开始 ------')
+
+    # ---------------- 切课 ----------------
+    # 切课阶段设一个总时长上限。
+    # 为什么必须设：断网时 location.href 仍读得到（本地状态，不需要网络），
+    # 于是切课会"发出导航但永远加载不出新页"，Wait-LessonCurrent 无限等待。
+    # 上限让它在几分钟内失败并交回上层，而不是长时间无响应。
+    $switchDeadline = (Get-Date).AddMinutes(4)
+    $forceClick = ($Settings.SwitchMode -eq 'click')
+    $how = Switch-Lesson -Session $Session -Selectors $Selectors -LessonId $Lesson.Id -ForceClick:$forceClick
+    $switched = Wait-LessonCurrent -Session $Session -Selectors $Selectors -LessonId $Lesson.Id -TimeoutSeconds 75
+
+    if (-not $switched) {
+        # 优先判断"登录态过期/被踢到登录页"——这种情况重试没有意义，直接上报
+        if (Test-OnLoginPage -Session $Session) {
+            Say '页面已跳到学习通登录页，登录可能已过期。本节中止，请重新登录后再运行' 'ERROR'
+            return $false
+        }
+        if ((Get-Date) -lt $switchDeadline) {
+            Say ("首次切课未生效（方式 $how），重试一次") 'WARN'
+            Start-Sleep -Seconds 5
+            [void](Switch-Lesson -Session $Session -Selectors $Selectors -LessonId $Lesson.Id -ForceClick:$forceClick)
+            $switched = Wait-LessonCurrent -Session $Session -Selectors $Selectors -LessonId $Lesson.Id -TimeoutSeconds 75
+        }
+    }
+    if (-not $switched) {
+        if (Test-OnLoginPage -Session $Session) {
+            Say '页面停在登录页，登录已过期。请重新登录后再运行' 'ERROR'
+            return $false
+        }
+        Say ("无法切换到课节 " + $Lesson.Id + "（方式 " + $how + "），跳过") 'ERROR'
+        return $false
+    }
+
+    # ---------------- 本节循环 ----------------
+    $replayLeft = [int]$Settings.MaxReplayPerLesson
+    $deadline = (Get-Date).AddMinutes([double]$Settings.MaxWaitMinutesPerLesson)
+    $noVideoPolls = 0
+    $reloadTried = $false
+    $playbackStarted = $false
+    $lastPosition = -1.0
+    $stallCount = 0
+    $lastMilestoneMin = -1
+
+    while ((Get-Date) -lt $deadline) {
+        # 保证页面可见：Chromium 在页面 hidden 时不允许加载/播放视频。
+        # 只在需要时调用（bringToFront 会让目标标签成为活动标签）。
+        if ($Settings.KeepForeground) {
+            $vis = Enable-LessonVideoPlayback -Session $Session -WindowHandle $WindowHandle
+            if (-not $vis.Ok) {
+                Say ("页面当前不可见（" + $vis.TopVisible + "），视频可能无法加载；已尝试恢复窗口与激活标签") 'WARN'
+            }
+        }
+
+        $videoCtx = Get-VideoContext -Session $Session -Selectors $Selectors
+
+        # ---- 没有视频帧：可能是非视频课节，也可能页面没加载好 ----
+        if ($videoCtx -le 0) {
+            $noVideoPolls++
+            Start-Sleep -Seconds 6
+
+            if ((Get-CurrentLessonId -Session $Session -Selectors $Selectors) -ne $Lesson.Id) {
+                Say '页面已跳走（登录过期或平台跳转），本节中止' 'WARN'
+                return $false
+            }
+
+            $latest = Get-LessonById -Session $Session -Selectors $Selectors -LessonId $Lesson.Id
+            if ($latest -and -not $latest.Unfinished) {
+                Say '该课节已标记完成' 'OK'
+                return $true
+            }
+
+            if ($noVideoPolls -eq 6 -and -not $reloadTried) {
+                $reloadTried = $true
+                Say '连续读不到视频帧，刷新页面重试一次' 'WARN'
+                try { Send-Cdp -Session $Session -Method 'Page.reload' -Params @{} | Out-Null } catch { }
+                Start-Sleep -Seconds 12
+                continue
+            }
+            if ($noVideoPolls -ge 14) {
+                Say ("该课节没有可播放的视频（可能是作业/讨论/测验类任务点），跳过: " + $Lesson.Id) 'WARN'
+                return $false
+            }
+            continue
+        }
+        $noVideoPolls = 0
+
+        # ---- 平台是否已登记完成 ----
+        $cardsCtx = Get-CardsContext -Session $Session -Selectors $Selectors
+        if ($cardsCtx -gt 0 -and (Test-JobFinished -Session $Session -Selectors $Selectors -ContextId $cardsCtx)) {
+            Clear-ProgressLine
+            Say '任务点已完成' 'OK'
+            return $true
+        }
+
+        $state = Get-VideoState -Session $Session -ContextId $videoCtx
+        if (-not $state.Ok) {
+            Say ("读不到播放器状态（" + $state.Error + "），稍后重试") 'DEBUG'
+            Start-Sleep -Seconds 6
+            continue
+        }
+
+        # ---- 时长未就绪：先触发播放（学习通要靠 play() 才开始加载）----
+        if ($state.Duration -le 0) {
+            $r = Start-VideoPlayback -Session $Session -ContextId $videoCtx -Rate $Settings.PlaybackRate
+            Say ("时长未就绪，尝试播放: " + $r)
+            Start-Sleep -Seconds 8
+            continue
+        }
+
+        # ---- 暂停中则继续播放 ----
+        if ($state.Paused) {
+            $r = Start-VideoPlayback -Session $Session -ContextId $videoCtx -Rate $Settings.PlaybackRate
+            Say ("暂停中 -> 继续播放: " + $r)
+            Start-Sleep -Seconds 3
+            continue
+        }
+
+        if (-not $playbackStarted) {
+            $playbackStarted = $true
+            Say ("开始播放：时长 " + [math]::Round($state.Duration, 1) + " 秒，从 " + [math]::Round($state.Current, 1) + " 秒处继续")
+        }
+
+        # ---- 停滞检测 ----
+        if ($state.Current -le $lastPosition + 1) { $stallCount++ } else { $stallCount = 0 }
+        $lastPosition = $state.Current
+
+        if ($stallCount -gt 0 -and ($stallCount % 5) -eq 0) {
+            Say ("进度停滞 " + $stallCount + " 次，尝试继续播放") 'WARN'
+            $r = Start-VideoPlayback -Session $Session -ContextId $videoCtx -Rate $Settings.PlaybackRate
+            Say ("  继续播放: " + $r)
+        }
+        if ($stallCount -ge 12) {
+            Say '长时间无进展，放弃本节' 'ERROR'
+            return $false
+        }
+
+        # 播放进度用单条进度条就地刷新，不逐行刷屏，也不写日志文件。
+        # 文件里只按分钟留里程碑（见下方 $lastMilestoneMin），
+        # 避免一晚上把日志撑到几十万行、淹没真正重要的事件。
+        $pct = 0
+        if ($state.Duration -gt 0) { $pct = [int](($state.Current / $state.Duration) * 100) }
+        if ($pct -gt 100) { $pct = 100 }
+        if ($pct -lt 0) { $pct = 0 }
+
+        $barWidth = 28
+        $filled = [int]([math]::Round($barWidth * $pct / 100.0))
+        if ($filled -gt $barWidth) { $filled = $barWidth }
+        if ($filled -lt 0) { $filled = 0 }
+        $bar = ('█' * $filled) + ('░' * ($barWidth - $filled))
+
+        $curMin = [int]($state.Current / 60)
+        $durMin = [int]($state.Duration / 60)
+        $curSec = [int]($state.Current % 60)
+        $durSec = [int]($state.Duration % 60)
+
+        $progressText = ("  $bar {0,3}%   " -f $pct) +
+            ("{0,2}:{1:00} / {2,2}:{3:00}" -f $curMin, $curSec, $durMin, $durSec)
+        Write-ProgressLine -Text $progressText
+
+        # 每分钟往日志文件里留一条里程碑，便于事后核查
+        $milestone = [int]($state.Current / 60)
+        if ($milestone -gt $lastMilestoneMin) {
+            $lastMilestoneMin = $milestone
+            & $Log ("播放里程碑 " + $milestone + " 分钟 / 共 " + $durMin + " 分钟（" + $pct + "%）") 'DEBUG' -FileOnly
+        }
+
+        # ---- 播到结尾 ----
+        if ($state.Current -ge ($state.Duration - 2)) {
+            Say '已播到结尾，等待平台登记完成状态…'
+
+            $registered = $false
+            for ($i = 0; $i -lt 8; $i++) {
+                Start-Sleep -Seconds 5
+                $c = Get-CardsContext -Session $Session -Selectors $Selectors
+                if ($c -gt 0 -and (Test-JobFinished -Session $Session -Selectors $Selectors -ContextId $c)) { $registered = $true; break }
+                $l = Get-LessonById -Session $Session -Selectors $Selectors -LessonId $Lesson.Id
+                if ($l -and -not $l.Unfinished) { $registered = $true; break }
+            }
+
+            if ($registered) {
+                Say '任务点已登记完成' 'OK'
+                return $true
+            }
+
+            if ($replayLeft -gt 0) {
+                $replayLeft--
+                Say ("播完但未被登记（可能要求 100% 时长），从头重播；剩余重播次数 " + $replayLeft) 'WARN'
+                $r = Restart-Video -Session $Session -ContextId $videoCtx -Rate $Settings.PlaybackRate
+                Say ("  重播: " + $r)
+                $lastPosition = -1.0
+                $stallCount = 0
+                Start-Sleep -Seconds 8
+                continue
+            }
+
+            Say '播完且重播次数用尽仍未登记，跳过本节（建议手动确认）' 'ERROR'
+            return $false
+        }
+
+        Start-Sleep -Seconds ([int]$Settings.PollSeconds)
+    }
+
+    Say ("本节超过最长等待时间 " + $Settings.MaxWaitMinutesPerLesson + " 分钟，跳过") 'ERROR'
+    return $false
+}
+
+Export-ModuleMember -Function Invoke-Lesson

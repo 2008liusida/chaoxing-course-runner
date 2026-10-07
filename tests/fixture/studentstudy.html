@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>学生学习页面（测试夹具）</title>
+<style>
+  body { font-family: "Microsoft Yahei", sans-serif; margin: 0; }
+  #left { display: inline-block; width: 60%; vertical-align: top; }
+  .ncells { padding: 3px 6px; display: block; position: relative; }
+  .roundpoint { display: inline-block; width: 14px; height: 14px; border-radius: 50%; float: right; }
+  .roundpoint.blue { background: #2ecc71; }
+  .roundpoint.orange01 { background: #e67e22; }
+  h5 { margin: 0; font-size: 14px; font-weight: normal; }
+  h5.currents { font-weight: bold; }
+  #right { display: inline-block; width: 35%; vertical-align: top; background: #f5f5f5; min-height: 600px; }
+  iframe { border: 1px solid #ccc; }
+  #bar { padding: 6px; background: #eee; }
+</style>
+</head>
+<body>
+
+<div id="bar">
+  <button id="left1" onclick="goPrev()">上一节</button>
+  <button id="right1" onclick="goNext()">下一节</button>
+  <span id="status">就绪</span>
+</div>
+
+<div id="left">
+  <!-- 这两个隐藏输入是学习通的真实结构：当前课节/课程/班级 -->
+  <input type="hidden" id="curChapterId" value="1222994220">
+  <input type="hidden" id="curCourseId" value="100000001">
+  <input type="hidden" id="curClazzId" value="200000002">
+
+  <div class="ncells"><h5 id="cur1222994204" class="">1.1.1 已完成课节</h5><span class="roundpoint blue"></span></div>
+  <div class="ncells"><h5 id="cur1222994205" class="">1.1.2 已完成课节</h5><span class="roundpoint blue"></span></div>
+  <div class="ncells"><h5 id="cur1222994217" class="">1.2.6 已完成课节</h5><span class="roundpoint blue"></span></div>
+  <div class="ncells"><h5 id="cur1222994218" class="">1.2.7 已完成课节</h5><span class="roundpoint blue"></span></div>
+  <div class="ncells"><h5 id="cur1222994219" class="">1.2.8 已完成课节</h5><span class="roundpoint blue"></span></div>
+  <div class="ncells"><h5 id="cur1222994220" class="currents">2.1.1 未完成课节</h5><span class="roundpoint orange01 jobCount"></span><input type="hidden" class="jobUnfinishCount" value="1"></div>
+  <div class="ncells"><h5 id="cur1222994221" class="">2.1.2 未完成课节</h5><span class="roundpoint orange01 jobCount"></span><input type="hidden" class="jobUnfinishCount" value="1"></div>
+  <div class="ncells"><h5 id="cur1222994222" class="">2.1.3 未完成课节</h5><span class="roundpoint orange01 jobCount"></span><input type="hidden" class="jobUnfinishCount" value="1"></div>
+  <div class="ncells"><h5 id="cur1222994196" class="">3.1 作业练习（无视频）</h5><span class="roundpoint orange01 jobCount"></span><input type="hidden" class="jobUnfinishCount" value="1"></div>
+
+  <!-- 目录链接：href 里带课节 id，工具靠它切课 -->
+  <div style="margin-top:14px">
+    <a href="javascript:void(0)" onclick="go('1222994220')">2.1.1</a>
+    <a href="javascript:void(0)" onclick="go('1222994221')">2.1.2</a>
+    <a href="javascript:void(0)" onclick="go('1222994222')">2.1.3</a>
+    <a href="javascript:void(0)" onclick="go('1222994196')">3.1</a>
+  </div>
+</div>
+
+<div id="right">
+  <!-- 内容层：路径与真实课程页一致（knowledge/cards），
+       否则工具的帧匹配规则（按 URL 特征找 iframe）无法命中 -->
+  <iframe id="iframe" width="620" height="420" src="knowledge/cards.html"></iframe>
+</div>
+
+<script>
+  var LESSONS = {
+    '1222994204': { title: '1.1.1', done: true,  video: true,  dur: 5 },
+    '1222994205': { title: '1.1.2', done: true,  video: true,  dur: 5 },
+    '1222994217': { title: '1.2.6', done: true,  video: true,  dur: 5 },
+    '1222994218': { title: '1.2.7', done: true,  video: true,  dur: 5 },
+    '1222994219': { title: '1.2.8', done: true,  video: true,  dur: 5 },
+    '1222994220': { title: '2.1.1', done: false, video: true,  dur: 8 },
+    '1222994221': { title: '2.1.2', done: false, video: true,  dur: 8 },
+    '1222994222': { title: '2.1.3', done: false, video: true,  dur: 8 },
+    '1222994196': { title: '3.1',   done: false, video: false, dur: 0 }
+  };
+
+  function go(id) {
+    var info = LESSONS[id];
+    if (!info) { return; }
+    document.getElementById('curChapterId').value = id;
+    // 同步地址栏参数，行为与真实课程页一致（工具会用 chapterId 切课）
+    try {
+      var u = new URL(location.href);
+      u.searchParams.set('chapterId', id);
+      history.replaceState(null, '', u.toString());
+    } catch (e) { }
+    // 更新 currents 高亮
+    var hs = document.querySelectorAll('h5[id^=cur]');
+    for (var i = 0; i < hs.length; i++) {
+      var hid = hs[i].id.replace('cur', '');
+      if (hs[i].className.indexOf('currents') >= 0) { hs[i].className = ''; }
+      if (hid === id) { hs[i].className = 'currents'; }
+    }
+    // 换内容层
+    var f = document.getElementById('iframe');
+    f.src = info.video ? ('knowledge/cards.html?chapter=' + id + '&dur=' + info.dur) : ('knowledge/nowork.html?chapter=' + id);
+    document.getElementById('status').textContent = '当前课节 ' + id;
+  }
+
+  function goNext() {
+    var order = Object.keys(LESSONS);
+    var cur = document.getElementById('curChapterId').value;
+    var i = order.indexOf(cur);
+    if (i >= 0 && i < order.length - 1) { go(order[i + 1]); }
+  }
+  function goPrev() {
+    var order = Object.keys(LESSONS);
+    var cur = document.getElementById('curChapterId').value;
+    var i = order.indexOf(cur);
+    if (i > 0) { go(order[i - 1]); }
+  }
+  function getTeacherAjax(courseId, clazzId, id) { go(id); }
+
+  // 初始加载时同步地址栏的 chapterId，与真实课程页保持一致
+  // （工具优先用地址栏切课，夹具若没有这个参数就无法覆盖该路径）
+  (function () {
+    var cur = document.getElementById('curChapterId').value;
+    try {
+      var u = new URL(location.href);
+      u.searchParams.set('chapterId', cur);
+      history.replaceState(null, '', u.toString());
+    } catch (e) { }
+  })();
+
+  // 内容层完成任务时回调（模拟超星把任务点标记为已完成）
+  window.markDone = function (id) {
+    var hs = document.querySelectorAll('h5[id^=cur]');
+    for (var i = 0; i < hs.length; i++) {
+      if (hs[i].id === ('cur' + id)) {
+        var row = hs[i].closest('.ncells');
+        var rp = row.querySelector('.roundpoint');
+        rp.className = 'roundpoint blue';
+        LESSONS[id].done = true;
+      }
+    }
+    document.getElementById('status').textContent = '课节 ' + id + ' 已完成';
+  };
+</script>
+</body>
+</html>
