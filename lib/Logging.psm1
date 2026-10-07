@@ -28,6 +28,31 @@ $script:LevelLabel = @{
 # 而 Write-RunnerLog 每次都要读它来判断"是否有进度行正在显示"。
 $script:ProgressLineActive = $false
 
+# 统一的控制台输出出口。
+#
+# 为什么需要它：图形界面版本把本工具跑在没有控制台的 runspace 里，
+# 那里 Write-Host 会失败或产生乱码（颜色、光标控制都无处落脚）。
+# 所以由这一个函数决定怎么输出：
+#   · 控制台：带颜色直接打印
+#   · 图形界面：走输出流，由界面捕获并按级别着色
+function Write-ConsoleLine {
+    param(
+        [Parameter(Position = 0)][AllowEmptyString()][string]$Text,
+        [string]$Level = 'Gray',
+        [switch]$NoNewline
+    )
+    if ($env:CCR_GUI -eq '1') {
+        # 交给管道的输出流；界面按内容判断级别并着色
+        Write-Output $Text
+        return
+    }
+    if ($NoNewline) {
+        Write-Host $Text -ForegroundColor $Level -NoNewline
+    } else {
+        Write-Host $Text -ForegroundColor $Level
+    }
+}
+
 function Write-RunnerLog {
     <#
     .SYNOPSIS
@@ -75,7 +100,7 @@ function Write-RunnerLog {
                 if ($dir -and -not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
                 Add-Content -Path $Path -Value $fileLine -Encoding UTF8
             } catch {
-                Write-Host ('[警告] 无法写入日志文件 ' + $Path + ' : ' + $_.Exception.Message) -ForegroundColor Yellow
+                Write-ConsoleLine -Text ('[警告] 无法写入日志文件 ' + $Path + ' : ' + $_.Exception.Message) -Level 'Yellow'
             }
         }
         return
@@ -84,10 +109,10 @@ function Write-RunnerLog {
 
     # 非临时行：若上一行是就地刷新的进度行，先换行收尾，避免它被覆盖
     if ($script:ProgressLineActive) {
-        Write-Host ''
+        Write-ConsoleLine -Text ''
         $script:ProgressLineActive = $false
     }
-    Write-Host $consoleLine -ForegroundColor $color
+    Write-ConsoleLine -Text $consoleLine -Level $color
 
     if ($Path) {
         try {
@@ -96,7 +121,7 @@ function Write-RunnerLog {
             Add-Content -Path $Path -Value $fileLine -Encoding UTF8
         } catch {
             # 日志落盘失败不应中断主流程，只在控制台提示一次
-            Write-Host "[警告] 无法写入日志文件 $Path : $($_.Exception.Message)" -ForegroundColor Yellow
+            Write-ConsoleLine -Text ("[警告] 无法写入日志文件 " + $Path + " : " + $_.Exception.Message) -Level 'Yellow'
         }
     }
 }
@@ -119,6 +144,14 @@ function Write-ProgressLine {
         [Parameter(Mandatory, Position = 0)][string]$Text,
         [string]$Color = 'DarkCyan'
     )
+    # 图形界面模式：把进度原文直接交出去，不补位、不回车。
+    # 补位与 `r 是"控制台就地刷新"的手段，在文本框里只会变成
+    # 一长串空格与重叠的乱码。界面自己会在状态区显示进度。
+    if ($env:CCR_GUI -eq '1') {
+        Write-Output $Text
+        return
+    }
+
     # 补位宽度按终端实际宽度自适应（留 1 字符余量）。
     # 写死宽度会在窄窗口里折行，进度条就变成一行一行往下滚 ——
     # 那就等于没有就地刷新。
@@ -136,7 +169,7 @@ function Write-ProgressLine {
         $line = $line + (' ' * ($width - $line.Length))
     }
 
-    Write-Host ("`r" + $line) -ForegroundColor $Color -NoNewline
+    Write-ConsoleLine -Text ("`r" + $line) -Level $Color -NoNewline
     $script:ProgressLineActive = $true
 }
 
@@ -148,9 +181,12 @@ function Clear-ProgressLine {
     [CmdletBinding()]
     param()
     if ($script:ProgressLineActive) {
-        Write-Host ''
+        Write-ConsoleLine -Text ''
         $script:ProgressLineActive = $false
     }
 }
 
-Export-ModuleMember -Function Write-RunnerLog, Write-ProgressLine, Clear-ProgressLine
+# 子模块必须显式导出：本文件作为清单的 NestedModule 加载，
+# 只有这里 Export-ModuleMember 列出的函数才会被清单汇总出去。
+# 新增函数时这里与 lib\ChaoxingCourseRunner.psd1 的 FunctionsToExport 都要加。
+Export-ModuleMember -Function Write-RunnerLog, Write-ProgressLine, Clear-ProgressLine, Write-ConsoleLine

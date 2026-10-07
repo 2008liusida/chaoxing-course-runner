@@ -1,14 +1,24 @@
 ﻿<#
     模块清单：ChaoxingCourseRunner 库
 
-    这里是**导出函数的唯一出处**。
-    各子模块内部刻意不再写 Export-ModuleMember —— 两处都写迟早会失同步，
-    而症状是"函数明明定义了却提示找不到"，很难查。
+    导出分两步，缺一不可：
+      1) 子模块（NestedModules）内部的 Export-ModuleMember 决定它导出什么，
+         清单才能汇总到 —— 少了它，函数定义了也提示找不到。
+      2) 下面 FunctionsToExport 是最终对外的清单。
+    两处都要改，容易漏。所以 tests\module-smoke.ps1 会核对
+    "所有 Write-* / 公开函数是否真的能用"，漏加会直接测失败。
+
+    注意：不要用 RequiredAssemblies 加载 CcrWin32.dll。
+    那会在模块导入阶段就加载，一旦被拒（例如 .NET 的 CAS 把 DLL 判为
+    来自网络位置）整个模块导入失败，什么都跑不起来。
+    改由 lib\PageVisibility.psm1 与 lib\Browser.psm1 内部按需加载，
+    加载不了还能退回运行时 Add-Type，功能降级而不是整体崩溃。
 
     新增函数的流程：
       1) 在对应 .psm1 里写 function
-      2) 把函数名加到下面的 FunctionsToExport
-      3) 跑 tests\module-smoke.ps1 确认导出正常
+      2) 该文件末尾的 Export-ModuleMember 里加上函数名
+      3) 把函数名加到下面的 FunctionsToExport
+      4) 跑 tests\module-smoke.ps1 确认导出正常
 
     分层（自上而下）：
       Run.ps1              流程编排：选课节 -> 播完 -> 切下一节
@@ -49,6 +59,7 @@
         'Write-RunnerLog'
         'Write-ProgressLine'
         'Clear-ProgressLine'
+        'Write-ConsoleLine'
         'Read-RunnerConfigFile'
         'Get-RunnerSettings'
 

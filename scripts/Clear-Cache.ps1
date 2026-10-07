@@ -34,17 +34,35 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+# 无控制台时设置编码会抛"句柄无效"（图形界面版本就是这种情况），
+# 所以只在真有控制台时才设。控制台里的中文显示依赖这一步。
+try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch { }
 
 $toolRoot = Split-Path -Parent $PSScriptRoot
 $profileDir = Join-Path $toolRoot 'browser-profile'
 
+
+# 控制台输出出口。
+# 图形界面版本没有控制台，Write-Host 会失败或产生乱码，所以统一走这里：
+#   · 控制台：带颜色直接打印
+#   · 图形界面：走输出流，由界面捕获
+function Write-Screen {
+    param(
+        [Parameter(Position = 0)][AllowEmptyString()][string]$Text,
+        [string]$Tone = 'Gray',
+        [switch]$NoNewline
+    )
+    if ($env:CCR_GUI -eq '1') { Write-Output $Text; return }
+    if ($NoNewline) { Write-Host $Text -ForegroundColor $Tone -NoNewline }
+    else { Write-Host $Text -ForegroundColor $Tone }
+}
+
 function Write-Head {
     param([string]$Text)
-    Write-Host ''
-    Write-Host ('=' * 60) -ForegroundColor DarkCyan
-    Write-Host ('  ' + $Text) -ForegroundColor Cyan
-    Write-Host ('=' * 60) -ForegroundColor DarkCyan
+    Write-Screen -Text ''
+    Write-Screen -Text ('=' * 60) -Tone DarkCyan
+    Write-Screen -Text ('  ' + $Text) -Tone Cyan
+    Write-Screen -Text ('=' * 60) -Tone DarkCyan
 }
 
 function Get-Size {
@@ -66,36 +84,35 @@ function Format-Size {
 Write-Head '清理浏览器缓存'
 
 if (-not (Test-Path $profileDir)) {
-    Write-Host '  还没有缓存目录，无需清理。' -ForegroundColor Green
-    Write-Host ''
+    Write-Screen -Text '  还没有缓存目录，无需清理。' -Tone Green
+    Write-Screen -Text ''
     exit 0
 }
 
 $before = Get-Size -Path $profileDir
-Write-Host ('  目录: ' + $profileDir)
-Write-Host ('  占用: ' + (Format-Size -Bytes $before))
-Write-Host ''
-
+Write-Screen -Text ('  目录: ' + $profileDir)
+Write-Screen -Text ('  占用: ' + (Format-Size -Bytes $before))
+Write-Screen -Text ''
 if ($All) {
-    Write-Host '  模式: 删除整个配置目录' -ForegroundColor Yellow
+    Write-Screen -Text '  模式: 删除整个配置目录' -Tone Yellow
 } else {
-    Write-Host '  模式: 只清缓存（保留浏览器配置）' -ForegroundColor Yellow
+    Write-Screen -Text '  模式: 只清缓存（保留浏览器配置）' -Tone Yellow
 }
 
 if (-not $Yes) {
-    Write-Host ''
-    Write-Host '  开始清理？[y/N] ' -ForegroundColor White -NoNewline
+    Write-Screen -Text ''
+    Write-Screen -Text '  开始清理？[y/N] ' -Tone White -NoNewline
     $ans = Read-Host
     if ($ans -notmatch '^(?i)y(es)?$') {
-        Write-Host '  已取消。' -ForegroundColor Gray
-        Write-Host ''
+        Write-Screen -Text '  已取消。' -Tone Gray
+        Write-Screen -Text ''
         exit 0
     }
 }
 
 # ---------------- 关闭工具专用浏览器 ----------------
-Write-Host ''
-Write-Host '  正在关闭工具专用的浏览器实例……' -ForegroundColor Gray
+Write-Screen -Text ''
+Write-Screen -Text '  正在关闭工具专用的浏览器实例……' -Tone Gray
 
 $killed = 0
 try {
@@ -110,10 +127,10 @@ try {
 } catch { }
 
 if ($killed -gt 0) {
-    Write-Host ('    已关闭 ' + $killed + ' 个进程') -ForegroundColor Gray
+    Write-Screen -Text ('    已关闭 ' + $killed + ' 个进程') -Tone Gray
     Start-Sleep -Seconds 4          # 等文件句柄释放
 } else {
-    Write-Host '    没有正在运行的工具浏览器实例' -ForegroundColor Gray
+    Write-Screen -Text '    没有正在运行的工具浏览器实例' -Tone Gray
 }
 
 # ---------------- 删除 ----------------
@@ -121,10 +138,10 @@ if ($All) {
     try {
         Remove-Item $profileDir -Recurse -Force -ErrorAction Stop
     } catch {
-        Write-Host ''
-        Write-Host ('  删除失败: ' + $_.Exception.Message) -ForegroundColor Red
-        Write-Host '  请确认浏览器窗口已全部关闭，然后重试。' -ForegroundColor Yellow
-        Write-Host ''
+        Write-Screen -Text ''
+        Write-Screen -Text ('  删除失败: ' + $_.Exception.Message) -Tone Red
+        Write-Screen -Text '  请确认浏览器窗口已全部关闭，然后重试。' -Tone Yellow
+        Write-Screen -Text ''
         exit 1
     }
 } else {
@@ -144,9 +161,9 @@ if ($All) {
         $sz = Get-Size -Path $p
         try {
             Remove-Item $p -Recurse -Force -ErrorAction Stop
-            Write-Host ('    已清 ' + $d + '（' + (Format-Size -Bytes $sz) + '）') -ForegroundColor Gray
+            Write-Screen -Text ('    已清 ' + $d + '（' + (Format-Size -Bytes $sz) + '）') -Tone Gray
         } catch {
-            Write-Host ('    跳过 ' + $d + '（被占用）') -ForegroundColor Yellow
+            Write-Screen -Text ('    跳过 ' + $d + '（被占用）') -Tone Yellow
         }
     }
 }
@@ -156,12 +173,12 @@ $after = Get-Size -Path $profileDir
 $freed = $before - $after
 
 Write-Head '清理完成'
-Write-Host ('  释放空间: ' + (Format-Size -Bytes $freed)) -ForegroundColor Green
-Write-Host ('  当前占用: ' + (Format-Size -Bytes $after))
+Write-Screen -Text ('  释放空间: ' + (Format-Size -Bytes $freed)) -Tone Green
+Write-Screen -Text ('  当前占用: ' + (Format-Size -Bytes $after))
 if (-not (Test-Path $profileDir)) {
-    Write-Host '  配置目录已删除。' -ForegroundColor Green
+    Write-Screen -Text '  配置目录已删除。' -Tone Green
 }
 if ($after -gt 0 -and -not $All) {
-    Write-Host '  （剩下的是浏览器自身的配置数据，不是缓存）' -ForegroundColor DarkGray
+    Write-Screen -Text '  （剩下的是浏览器自身的配置数据，不是缓存）' -Tone DarkGray
 }
-Write-Host ''
+Write-Screen -Text ''

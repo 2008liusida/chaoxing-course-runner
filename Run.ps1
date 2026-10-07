@@ -90,12 +90,16 @@ param(
     [switch]$LaunchOnly,
     [switch]$DryRun,
     [switch]$NoLaunch,
-    [switch]$StopBrowserWhenDone
+    [switch]$StopBrowserWhenDone,
+    [switch]$NoClearScreen,
+    [switch]$NoArrangeWindows
 )
 
 $ErrorActionPreference = 'Stop'
 # 让中文在 Windows PowerShell 5.1 的控制台里也能正常显示
-[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+# 无控制台时设置编码会抛"句柄无效"（图形界面版本就是这种情况），
+# 所以只在真有控制台时才设。控制台里的中文显示依赖这一步。
+try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch { }
 
 # ---------------------------------------------------------------- 退出码
 $EXIT_OK = 0
@@ -126,11 +130,28 @@ try {
     $dirCtx = 0
 $selectors = Import-CourseSelectors
 } catch {
-    Write-Host "[错误] 配置或选择器加载失败: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Screen -Text "[错误] 配置或选择器加载失败: $($_.Exception.Message)" -Tone Red
     exit $EXIT_BAD_ARGS
 }
 
 Set-CdpLogPath -Path $cfg.LogFile
+
+
+# 控制台输出出口。
+# 图形界面版本没有控制台，Write-Host 会失败或产生乱码
+# （颜色与光标控制无处落脚），所以统一走这里：
+#   · 控制台：带颜色直接打印
+#   · 图形界面：走输出流，由界面捕获并按级别着色
+function Write-Screen {
+    param(
+        [Parameter(Position = 0)][AllowEmptyString()][string]$Text,
+        [string]$Tone = 'Gray',
+        [switch]$NoNewline
+    )
+    if ($env:CCR_GUI -eq '1') { Write-Output $Text; return }
+    if ($NoNewline) { Write-Host $Text -ForegroundColor $Tone -NoNewline }
+    else { Write-Host $Text -ForegroundColor $Tone }
+}
 
 function Write-Log {
     <#
@@ -215,11 +236,11 @@ function Wait-UserLogin {
         }
     }
 
-    Write-Host '============================================================' -ForegroundColor Yellow
-    Write-Host '  去登录学习通！' -ForegroundColor Yellow
-    Write-Host '============================================================' -ForegroundColor Yellow
-    Write-Host '  登录页开好了，去登陆吧~' -ForegroundColor White
-    Write-Host ''
+    Write-Screen -Text '============================================================' -Tone Yellow
+    Write-Screen -Text '  去登录学习通！' -Tone Yellow
+    Write-Screen -Text '============================================================' -Tone Yellow
+    Write-Screen -Text '  登录页开好了，去登陆吧~' -Tone White
+    Write-Screen -Text ''
 
     # 自动检测，一直等 —— 不催促、不提示，确认登上了才继续。
     # 判据是"确认停在真正的学习通页面"，而不是"没停在登录页"：
@@ -228,11 +249,11 @@ function Wait-UserLogin {
         'ready' -eq (Get-LoginState -Port $Port)
     })
     Clear-ProgressLine
-    Write-Host '  行' -ForegroundColor Green
-    Write-Host '  给你开课程列表……' -ForegroundColor Gray
+    Write-Screen -Text '  行' -Tone Green
+    Write-Screen -Text '  给你开课程列表……' -Tone Gray
     if (Open-CourseList -Port $Port) {
-        Write-Host '  去点进你要刷的课，进「学生学习页面」' -ForegroundColor White
-        Write-Host '  （左边目录、右边视频那个页面）' -ForegroundColor Gray
+        Write-Screen -Text '  去点进你要刷的课，进「学生学习页面」' -Tone White
+        Write-Screen -Text '  （左边目录、右边视频那个页面）' -Tone Gray
         # 同样只认正面确认：必须真的找到课程页。
         [void](Wait-Until -Message '' -TimeoutSeconds 14400 -Test {
             $null -ne (Find-CoursePage -Port $Port)
@@ -405,11 +426,11 @@ function Build-LessonQueue {
 # ---------------------------------------------------------------- 主流程
 
 Write-Log '=== 超星学习通 · 自动连播工具 启动 ===' 'INFO' -FileOnly
-try { Clear-Host } catch { }
+if (-not $NoClearScreen) { try { Clear-Host } catch { } }
 # ---------------- 布局第一步：先把终端摆到右半屏 ----------------
 # 此时浏览器还没启动，只能摆终端。
 # 先摆的好处是：接下来打印的启动信息立刻落在正确位置，不会先左后右地跳。
-if ($cfg.ArrangeWindows) {
+if ($cfg.ArrangeWindows -and -not $NoArrangeWindows) {
     try {
         if (-not (Set-TerminalWindowPlacement -Side 'right')) {
             Write-Log '终端窗口没摆成（找不到窗口句柄），你可以手动拖一下' 'WARN'
@@ -482,7 +503,7 @@ Write-Log "已连接: $($version.Browser)"
 # 浏览器必须等启动完才有窗口句柄，所以放在这里。
 # 用带校验的版本：浏览器启动后会异步恢复上次的窗口状态（常见是最大化），
 # 可能把刚摆好的位置覆盖掉，所以摆完要回读核对、不符就重设。
-if ($cfg.ArrangeWindows) {
+if ($cfg.ArrangeWindows -and -not $NoArrangeWindows) {
     try {
         $layoutBrowser = Get-BrowserWindowHandle
         $lay = Arrange-WindowsVerified -BrowserHandle $layoutBrowser -BrowserSide 'left'
@@ -522,9 +543,9 @@ if (-not $page) {
     # 到这里说明登录了但没打开课程页
     $tab = Get-AnyCourseTab -Port $cfg.DebugPort
     if ($tab.Found) {
-        Write-Host '  去点进你要刷的课，进「学生学习页面」' -ForegroundColor White
-        Write-Host '  （左边目录、右边视频那个页面）' -ForegroundColor Gray
-        Write-Host ''
+        Write-Screen -Text '  去点进你要刷的课，进「学生学习页面」' -Tone White
+        Write-Screen -Text '  （左边目录、右边视频那个页面）' -Tone Gray
+        Write-Screen -Text ''
 
         # 自动检测，一直等 —— 不催促、不提示。
         [void](Wait-Until -Message '' -TimeoutSeconds 14400 -Test {

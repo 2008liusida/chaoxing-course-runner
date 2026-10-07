@@ -1,4 +1,4 @@
-# 贡献指南
+﻿# 贡献指南
 
 感谢愿意一起维护这个工具。因为它的"易燃部分"是第三方平台的 DOM，
 最需要的是**在平台改版时能快速定位并只改一处**。
@@ -115,3 +115,18 @@ Get-ChildItem -Recurse -Include *.ps1,*.psm1,*.psd1 | ForEach-Object {
 本项目采用 PolyForm Noncommercial License 1.0.0（禁止商业使用，需保留署名）。
 提交代码即表示你同意以同一许可证分发你的贡献。
 若要改为允许商用（如 MIT），需维护者统一替换 `LICENSE` 并更新 `README.md`。
+
+## 构建图形界面版本
+
+仓库 `dist\` 下的 `ChaoxingRunner.exe` 不进版本库，由构建脚本生成：
+
+```powershell
+python gui\build.py
+```
+
+只用到 Windows 自带的 `csc.exe`，不需要 .NET SDK。
+产物在 `dist\ChaoxingRunner.exe`。
+
+改完脚本后要重新构建，否则 exe 里还是旧的内嵌脚本 ——
+这是最容易忘的一步。
+（`ChaoxingRunner.exe --selftest` 可以确认内嵌资源是否完好。）

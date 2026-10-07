@@ -4,6 +4,10 @@
 
 ```
 chaoxing-runner/
+├─ dist/                        编译产物（不进版本库）：ChaoxingRunner.exe
+├─ gui/                         图形界面版本源码
+│    Gui.cs.tpl                 C# 界面源码模板（内嵌脚本的占位符）
+│    build.py                   用 Windows 自带 csc.exe 编译，不需要 .NET SDK
 ├─ Start.bat                     主入口（双击即用）
 ├─ Run.ps1                       主流程编排
 ├─ Diagnose.bat                  环境自检（跑不起来时先双击这个）
@@ -234,3 +238,36 @@ Run.ps1                 流程决策：选哪些课节、播到什么时候停�
 夹具（`tests/fixture/`）刻意复刻真实的 URL 路径与层级
 （`knowledge/cards.html` → `ananas/modules/video/index.html`），
 否则帧匹配规则无法被验证。
+
+## 图形界面版本的分层
+
+图形界面不是另写一套逻辑，而是在原脚本外面套了一层窗口：
+
+```
+ChaoxingRunner.exe（C# / .NET Framework 4.0）
+  │  内嵌全部 .ps1 / .psm1 / .psd1（base64）
+  │  运行时释放到临时目录
+  ↓
+Windows 自带的 PowerShell 引擎（System.Management.Automation）
+  ↓
+Run.ps1 —— 与 Start.bat 走的是同一条路径
+```
+
+选这个做法而不是用 C# 重写的原因：
+
+- **不重复实现**。播放状态机、切课、平台适配这些逻辑已经在 PowerShell 里
+  稳定运行并有测试覆盖，重写一遍等于把踩过的坑再踩一次。
+- **零运行时依赖**。.NET Framework 4.0 在所有 Windows 10/11 上都有，
+  PowerShell 也是系统自带，所以 exe 是真正"双击即用"。
+- **不用 .NET SDK 构建**。用系统自带的 `csc.exe` 就够，
+  贡献者不需要装几百 MB 的开发环境。
+
+界面与脚本之间靠两条约定通信：
+
+| 机制 | 用途 |
+|---|---|
+| 环境变量 `CCR_GUI=1` | 告诉脚本"没有控制台"：进度行不补位、不回车；控制台输出改走管道 |
+| `-NoClearScreen` / `-NoArrangeWindows` | 界面没有控制台，也不需要脚本去摆窗口 |
+
+这两条是为了让同一份脚本既能服务控制台、又能服务窗口，
+而不必维护两份分支。

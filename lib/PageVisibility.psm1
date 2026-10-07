@@ -26,7 +26,20 @@
 Set-StrictMode -Version Latest
 Import-Module (Join-Path $PSScriptRoot 'CdpClient.psm1') -Force -DisableNameChecking
 
-Add-Type -Namespace CcrVis -Name Win -MemberDefinition @'
+# Win32 声明的来源。
+#
+# 为什么不用预编译程序集：曾试过随包发布 CcrWin32.dll，但 .NET 会把
+# 从网上下载的文件判为"来自网络位置"并拒绝加载（CAS），
+# 而本工具正是通过 zip 分发的 —— 用户解压后必然踩到。
+# 若再用清单的 RequiredAssemblies 加载，失败会发生在模块导入阶段，
+# 整个工具直接起不来。
+#
+# 所以用运行时 Add-Type，并注意两点：
+#   1) 外面套 try/catch —— 编译失败时功能降级，而不是报错刷屏
+#   2) 编译需要可写的临时目录；图形界面版本会把 TMP/TEMP 指到可写位置
+if (-not ('CcrVis.Win' -as [type])) {
+    try {
+        Add-Type -Namespace CcrVis -Name Win -MemberDefinition @'
 [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
 [DllImport("user32.dll")] public static extern bool IsZoomed(IntPtr h);
 [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);
@@ -43,7 +56,13 @@ Add-Type -Namespace CcrVis -Name Win -MemberDefinition @'
 [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
 [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr h, int attr, out RECT rect, int size);
 public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
-'@ -ErrorAction SilentlyContinue
+'@ -ErrorAction Stop
+    } catch {
+        # 降级而非崩溃：窗口可见性会退回 CDP 侧的判断，
+        # 窗口布局与置前不可用，播放本身不受影响。
+        Write-CdpDiag ('Win32 声明编译失败，窗口相关功能不可用: ' + $_.Exception.Message)
+    }
+}
 
 function Get-PageVisibility {
     <#

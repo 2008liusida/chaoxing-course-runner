@@ -165,14 +165,12 @@ function Set-BrowserForeground {
 
 # SetForegroundWindow 的 P/Invoke 声明。
 # 用 Add-Type 一次性编译；重复调用时 PowerShell 会复用已加载的类型。
+# Win32 声明。用运行时 Add-Type（原因见 PageVisibility.psm1 里的说明）。
 if (-not ('Ccr.NativeMethods' -as [type])) {
-    Add-Type -Namespace Ccr -Name NativeMethods -MemberDefinition @'
+    try {
+        Add-Type -Namespace Ccr -Name NativeMethods -MemberDefinition @'
 [DllImport("user32.dll", SetLastError = true)]
 public static extern bool SetForegroundWindow(IntPtr hWnd);
-
-// 以下用于按窗口面积挑出浏览器真正的主窗口。
-// 浏览器进程里还有隐藏辅助窗口（常在 -25600 坐标、尺寸极小），
-// 按句柄大小挑会选错。
 [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc cb, IntPtr param);
 [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
 [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
@@ -180,6 +178,11 @@ public static extern bool SetForegroundWindow(IntPtr hWnd);
 [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT rect);
 public delegate bool EnumProc(IntPtr h, IntPtr param);
 public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
-'@
+'@ -ErrorAction Stop
+    } catch {
+        # 本文件不 import 其它模块，Write-CdpDiag 在这里不可用。
+        # 用 Write-Verbose：默认不刷屏，加 -Verbose 能看到，不静默吞掉。
+        Write-Verbose ('Win32 声明编译失败，浏览器窗口定位不可用: ' + $_.Exception.Message)
+    }
 }
 
