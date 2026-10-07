@@ -235,6 +235,22 @@ function Get-AnyCourseTab {
 # ================================================================
 
 Clear-Host
+# ---------------- 启动布局：浏览器一侧、终端另一侧 ----------------
+# 摆好之后两者都看得见，且不需要抢前台 ——
+# Chromium 只要求窗口可见，不要求它在最前。
+# 失败不影响主流程（比如终端由未知宿主托管时找不到窗口句柄）。
+if ($cfg.ArrangeWindows) {
+    try {
+        $layoutBrowser = Get-BrowserWindowHandle
+        $lay = Arrange-Windows -BrowserHandle $layoutBrowser
+        if (-not $lay.Terminal) {
+            Write-Info '终端窗口没摆成（找不到窗口句柄），你可以手动拖一下'
+        }
+    } catch {
+        Write-CdpDiag ('启动布局失败: ' + $_.Exception.Message)
+    }
+}
+
 Write-Host '  ==========================================================' -ForegroundColor DarkCyan
 Write-Host '   ██████╗██╗  ██╗     ██████╗ ██╗   ██╗███╗   ██╗███╗   ██╗███████╗██████╗' -ForegroundColor Magenta
 Write-Host '  ██╔════╝╚██╗██╔╝     ██╔══██╗██║   ██║████╗  ██║████╗  ██║██╔════╝██╔══██╗' -ForegroundColor Magenta

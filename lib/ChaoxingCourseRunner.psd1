@@ -62,6 +62,11 @@
         'Get-CommonSelector'
         'Invoke-Lesson'
         'Enable-LessonVideoPlayback'
+        'Arrange-Windows'
+        'Set-WindowHalf'
+        'Get-WindowFrameInsets'
+        'Get-TerminalWindowHandle'
+        'Get-ScreenWorkArea'
         'Get-PageVisibility'
         'Read-CourseSelectorTable'
 

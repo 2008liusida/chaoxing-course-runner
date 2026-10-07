@@ -64,5 +64,8 @@ $KeepForeground = $true
 # 关掉则不动浏览器窗口位置。
 $SideBySide = $false
 
+# 启动时自动布局：浏览器占一侧，终端占另一侧，两者都看得见。
+$ArrangeWindows = $true
+
 # 日志文件路径（相对工具目录或绝对路径）。
 $LogFile = 'logs\run.log'

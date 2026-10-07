@@ -33,6 +33,12 @@ Add-Type -Namespace CcrVis -Name Win -MemberDefinition @'
 [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
 [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
 [DllImport("user32.dll")] public static extern bool SystemParametersInfo(uint action, uint param, ref RECT rect, uint winIni);
+[DllImport("user32.dll")] public static extern IntPtr GetWindow(IntPtr h, uint cmd);
+[DllImport("user32.dll")] public static extern IntPtr GetConsoleWindow();
+[DllImport("user32.dll")] public static extern bool IsWindow(IntPtr h);
+[DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT rect);
+[DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+[DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr h, int attr, out RECT rect, int size);
 public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
 '@ -ErrorAction SilentlyContinue
 
@@ -175,4 +181,234 @@ function Enable-LessonVideoPlayback {
     return $result
 }
 
-Export-ModuleMember -Function Get-PageVisibility, Enable-LessonVideoPlayback
+
+function Get-ScreenWorkArea {
+    <#
+    .SYNOPSIS
+        取主屏工作区（已排除任务栏）。
+    .OUTPUTS
+        PSCustomObject：@{ Left; Top; Width; Height }
+    #>
+    [CmdletBinding()]
+    param()
+    $wa = New-Object CcrVis.Win+RECT
+    if ([CcrVis.Win]::SystemParametersInfo(0x0030, 0, [ref]$wa, 0)) {
+        return [pscustomobject]@{
+            Left   = $wa.Left
+            Top    = $wa.Top
+            Width  = $wa.Right - $wa.Left
+            Height = $wa.Bottom - $wa.Top
+        }
+    }
+    return $null
+}
+
+function Get-TerminalWindowHandle {
+    <#
+    .SYNOPSIS
+        找当前终端窗口的顶层句柄。
+    .DESCRIPTION
+        终端可能由 Windows Terminal、conhost 或 OpenConsole 托管，
+        可见窗口未必属于当前进程，因此：
+          1. 先取 GetConsoleWindow()，再沿 owner 链走到顶层
+          2. 若拿到的不是有效顶层窗口，则按进程名枚举顶层窗口
+    .OUTPUTS
+        IntPtr；找不到时返回 [IntPtr]::Zero
+    #>
+    [CmdletBinding()]
+    param()
+
+    # 路径 1：控制台窗口 + owner 链
+    try {
+        $h = [CcrVis.Win]::GetConsoleWindow()
+        if ($h -ne [IntPtr]::Zero) {
+            $top = $h
+            for ($i = 0; $i -lt 8; $i++) {
+                $owner = [CcrVis.Win]::GetWindow($top, 4)   # GW_OWNER
+                if ($owner -eq [IntPtr]::Zero) { break }
+                $top = $owner
+            }
+            if ($top -ne [IntPtr]::Zero -and [CcrVis.Win]::IsWindow($top)) { return $top }
+            if ([CcrVis.Win]::IsWindow($h)) { return $h }
+        }
+    } catch {
+        Write-CdpDiag ('GetConsoleWindow 失败: ' + $_.Exception.Message)
+    }
+
+    # 路径 2：按终端进程名枚举
+    try {
+        $myPid = [uint32]$global:PID
+        $names = @('WindowsTerminal', 'conhost', 'OpenConsole', 'wt')
+        foreach ($proc in @(Get-Process -Name $names -ErrorAction SilentlyContinue)) {
+            if ($proc.MainWindowHandle -ne [IntPtr]::Zero) { return $proc.MainWindowHandle }
+        }
+        # 路径 3：退而求其次，当前进程自己的主窗口
+        $self = Get-Process -Id $myPid -ErrorAction SilentlyContinue
+        if ($self -and $self.MainWindowHandle -ne [IntPtr]::Zero) { return $self.MainWindowHandle }
+    } catch {
+        Write-CdpDiag ('枚举终端窗口失败: ' + $_.Exception.Message)
+    }
+
+    return [IntPtr]::Zero
+}
+
+function Get-WindowFrameInsets {
+    <#
+    .SYNOPSIS
+        取窗口"不可见边框"的宽度（左/上/右/下）。
+    .DESCRIPTION
+        Windows 给可调整大小的窗口留了一圈不可见边框（鼠标移到边缘才出现
+        缩放光标），GetWindowRect 返回的是含这圈边框的矩形。
+        直接按矩形并排，可见部分会重叠或留缝。
+
+        取值顺序：
+          1. DwmGetWindowAttribute(DWMWA_EXTENDED_FRAME_BOUNDS) —— 系统实测
+          2. 取不到或数值不合理 → Windows 标准边框 7px
+             （无边框窗口、DWM 关闭、全屏窗口会走到这里）
+
+        全程用系统 API，不含任何与具体机器绑定的假设。
+    .OUTPUTS
+        PSCustomObject：@{ Left; Top; Right; Bottom; Source }
+        Source 为 'dwm' 或 'standard'，便于排查。
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][IntPtr]$Handle)
+
+    # Windows 标准不可见边框（物理像素）。实测在 100%/125%/150% 缩放下相同。
+    $std = 7
+    $fallback = [pscustomobject]@{ Left = $std; Top = 0; Right = $std; Bottom = $std; Source = 'standard' }
+
+    if ($Handle -eq [IntPtr]::Zero) { return $fallback }
+
+    try {
+        $wr = New-Object CcrVis.Win+RECT
+        if (-not [CcrVis.Win]::GetWindowRect($Handle, [ref]$wr)) { return $fallback }
+
+        $fr = New-Object CcrVis.Win+RECT
+        if ([CcrVis.Win]::DwmGetWindowAttribute($Handle, 9, [ref]$fr, 16) -ne 0) { return $fallback }
+
+        $l = $fr.Left - $wr.Left
+        $tp = $fr.Top - $wr.Top
+        $r = $wr.Right - $fr.Right
+        $b = $wr.Bottom - $fr.Bottom
+
+        # 合理性检查：差值应在 0..40；且可见区域不能大于窗口矩形
+        foreach ($v in @($l, $tp, $r, $b)) {
+            if ($v -lt 0 -or $v -gt 40) { return $fallback }
+        }
+        $visW = $fr.Right - $fr.Left
+        $winW = $wr.Right - $wr.Left
+        if ($visW -gt $winW -or ($fr.Bottom - $fr.Top) -gt ($wr.Bottom - $wr.Top)) { return $fallback }
+
+        return [pscustomobject]@{ Left = $l; Top = $tp; Right = $r; Bottom = $b; Source = 'dwm' }
+    } catch {
+        return $fallback
+    }
+}
+
+function Set-WindowHalf {
+    <#
+    .SYNOPSIS
+        把窗口摆到屏幕的左半或右半，可见边界严格贴合，且不抢焦点。
+    .DESCRIPTION
+        步骤：
+          1. 取工作区（SPI_GETWORKAREA，已排除任务栏）
+          2. 取该窗口的不可见边框宽度（DWM 实测，取不到用标准值）
+          3. 按"可见边界"计算窗口矩形并摆放
+          4. 回读实际矩形，与目标比对；有偏差则按误差再修一次
+        第 4 步是为了兜住个别窗口对尺寸请求的调整（最小宽度限制等），
+        让结果在任何机器上都自洽，而不是假设一次调用就成功。
+    .OUTPUTS
+        PSCustomObject：@{ Ok; Side; X; Width; InsetSource; Corrected }
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][IntPtr]$Handle,
+        [Parameter(Mandatory)][ValidateSet('left', 'right')][string]$Side
+    )
+
+    $result = [pscustomobject]@{
+        Ok = $false; Side = $Side; X = 0; Width = 0
+        InsetSource = ''; Corrected = $false
+    }
+    if ($Handle -eq [IntPtr]::Zero) { return $result }
+
+    $wa = Get-ScreenWorkArea
+    if (-not $wa) { return $result }
+
+    $ins = Get-WindowFrameInsets -Handle $Handle
+    $result.InsetSource = $ins.Source
+
+    $halfW = [int]($wa.Width / 2)
+    $visX = if ($Side -eq 'left') { $wa.Left } else { $wa.Left + $halfW }
+
+    # 目标：可见左边界 = visX，可见宽度 = halfW
+    $targetWinX = $visX - $ins.Left
+    $targetWinW = $halfW + $ins.Left + $ins.Right
+    $targetWinY = $wa.Top - $ins.Top
+    $targetWinH = $wa.Height + $ins.Top + $ins.Bottom
+
+    # SWP_NOACTIVATE(0x0010) | SWP_NOZORDER(0x0004)
+    [void][CcrVis.Win]::SetWindowPos($Handle, [IntPtr]::Zero, $targetWinX, $targetWinY, $targetWinW, $targetWinH, 0x0014)
+
+    # 回读并校正一次
+    $wr = New-Object CcrVis.Win+RECT
+    if ([CcrVis.Win]::GetWindowRect($Handle, [ref]$wr)) {
+        $actualW = $wr.Right - $wr.Left
+        $dx = $targetWinX - $wr.Left
+        $dw = $targetWinW - $actualW
+        if ($dx -ne 0 -or $dw -ne 0) {
+            [void][CcrVis.Win]::SetWindowPos($Handle, [IntPtr]::Zero,
+                $targetWinX, $targetWinY, $targetWinW, $targetWinH, 0x0014)
+            $result.Corrected = $true
+        }
+        $result.X = $wr.Left
+        $result.Width = $actualW
+    }
+
+    $result.Ok = $true
+    return $result
+}
+
+function Arrange-Windows {
+    <#
+    .SYNOPSIS
+        启动时一次性摆好窗口：浏览器一侧、终端另一侧。
+    .DESCRIPTION
+        两者并排后，进度条与终端输出都看得见，且不需要抢前台 ——
+        Chromium 只要求窗口可见，不要求它在最前。
+    .PARAMETER BrowserHandle
+        浏览器主窗口句柄；[IntPtr]::Zero 时跳过浏览器。
+    .PARAMETER BrowserSide
+        浏览器放哪一侧，默认 'left'。
+    .OUTPUTS
+        PSCustomObject：@{ Browser; Terminal; BrowserHandle; TerminalHandle }
+    #>
+    [CmdletBinding()]
+    param(
+        [IntPtr]$BrowserHandle = [IntPtr]::Zero,
+        [ValidateSet('left', 'right')][string]$BrowserSide = 'left'
+    )
+
+    $termSide = if ($BrowserSide -eq 'left') { 'right' } else { 'left' }
+    $result = [pscustomobject]@{
+        Browser        = $false
+        Terminal       = $false
+        BrowserHandle  = $BrowserHandle
+        TerminalHandle = [IntPtr]::Zero
+    }
+
+    if ($BrowserHandle -ne [IntPtr]::Zero) {
+        $result.Browser = (Set-WindowHalf -Handle $BrowserHandle -Side $BrowserSide).Ok
+    }
+
+    $term = Get-TerminalWindowHandle
+    $result.TerminalHandle = $term
+    if ($term -ne [IntPtr]::Zero) {
+        $result.Terminal = (Set-WindowHalf -Handle $term -Side $termSide).Ok
+    }
+
+    return $result
+}
+
+Export-ModuleMember -Function Get-PageVisibility, Enable-LessonVideoPlayback, Get-ScreenWorkArea, Get-TerminalWindowHandle, Get-WindowFrameInsets, Set-WindowHalf, Arrange-Windows

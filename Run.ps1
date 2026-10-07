@@ -418,6 +418,19 @@ function Build-LessonQueue {
 
 Write-Log '=== 超星学习通 · 自动连播工具 启动 ===' 'INFO' -FileOnly
 try { Clear-Host } catch { }
+# ---------------- 启动布局：浏览器一侧、终端另一侧 ----------------
+if ($cfg.ArrangeWindows) {
+    try {
+        $layoutBrowser = Get-BrowserWindowHandle
+        $lay = Arrange-Windows -BrowserHandle $layoutBrowser
+        if (-not $lay.Terminal) {
+            Write-Log '终端窗口没摆成（找不到窗口句柄），你可以手动拖一下' 'WARN'
+        }
+    } catch {
+        Write-CdpDiag ('启动布局失败: ' + $_.Exception.Message)
+    }
+}
+
 Write-Log '=========================================================='
 Write-Log ' ██████╗██╗  ██╗     ██████╗ ██╗   ██╗███╗   ██╗███╗   ██╗███████╗██████╗' 'OK'
 Write-Log '██╔════╝╚██╗██╔╝     ██╔══██╗██║   ██║████╗  ██║████╗  ██║██╔════╝██╔══██╗' 'OK'

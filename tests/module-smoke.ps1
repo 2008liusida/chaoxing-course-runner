@@ -146,6 +146,45 @@ try {
     foreach ($f in $tempFiles) { Remove-Item $f -Force -ErrorAction SilentlyContinue }
 }
 
+
+# ---------------- P/Invoke 声明与调用一致性 ----------------
+# 目的：拦住"调用了未声明的 Win32 方法"这类问题。
+# 这种错误会被 try/catch 吞掉，表现为静默退化为默认值 ——
+# 功能看起来正常，实际没生效，极难排查（本次开发中真实踩到过）。
+$win32Files = @(
+    (Join-Path $root 'lib\PageVisibility.psm1'),
+    (Join-Path $root 'lib\Browser.psm1')
+)
+$declMissing = @()
+foreach ($wf in $win32Files) {
+    if (-not (Test-Path $wf)) { continue }
+    $wc = [System.IO.File]::ReadAllText($wf, (New-Object System.Text.UTF8Encoding($false)))
+    $declared = @{}
+    foreach ($m in [regex]::Matches($wc, 'public static extern [\w\.]+ (\w+)\s*\(')) {
+        $declared[$m.Groups[1].Value] = $true
+    }
+    foreach ($m in [regex]::Matches($wc, '(?:CcrVis|Ccr|NativeMethods)\.Win\]::(\w+)')) {
+        $name = $m.Groups[1].Value
+        if (-not $declared.ContainsKey($name)) {
+            $declMissing += ((Split-Path $wf -Leaf) + ':' + $name)
+        }
+    }
+}
+Assert-True 'Win32 方法调用均有声明（缺失会静默失败）' ($declMissing.Count -eq 0)
+if ($declMissing.Count -gt 0) {
+    Write-Host ('      缺失: ' + ($declMissing -join ', ')) -ForegroundColor Red
+}
+
+# ---------------- 窗口布局相关函数 ----------------
+foreach ($fn in @('Arrange-Windows', 'Set-WindowHalf', 'Get-WindowFrameInsets', 'Get-TerminalWindowHandle', 'Get-ScreenWorkArea')) {
+    Assert-True ('已导出 ' + $fn) ($cmds -contains $fn)
+}
+$area = Get-ScreenWorkArea
+Assert-True '能取到屏幕工作区' ($null -ne $area -and $area.Width -gt 0)
+if ($area) {
+    Assert-True '工作区宽度可二等分' (([int]($area.Width / 2)) * 2 -le $area.Width)
+}
+
 # ---------------- 汇总 ----------------
 Write-Output ''
 Write-Output ('===== 冒烟测试结果: 通过 ' + $script:Pass + ' 项，失败 ' + $script:Fail + ' 项 =====')
