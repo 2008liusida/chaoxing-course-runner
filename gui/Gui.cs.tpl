@@ -52,6 +52,9 @@ namespace ChaoxingRunner
         StatusStrip statusStrip;
         ToolStripStatusLabel statusLabel;
 
+        // 由 --autorun 设置：界面显示后自动执行一次 Run.ps1
+        public string AutoRun = null;
+
         // 运行状态
         string workDir;
         PowerShell ps;
@@ -533,6 +536,16 @@ namespace ChaoxingRunner
                 SetStatus("已结束。" + s.Trim());
         }
 
+        // 由 --autorun 的 Shown 事件调用。
+        // 走的是和按钮完全相同的路径，所以它跑通了就说明按钮也能跑通。
+        public void RunAuto()
+        {
+            if (string.IsNullOrEmpty(AutoRun)) { return; }
+            AppendLog("[界面] 自动执行: Run.ps1 " + AutoRun + Environment.NewLine,
+                Color.FromArgb(130, 200, 255));
+            RunScript("Run.ps1", AutoRun + " -NoClearScreen -NoArrangeWindows", false);
+        }
+
         // --------------------------------------------------------------
         //  按钮动作
         // --------------------------------------------------------------
@@ -593,6 +606,31 @@ namespace ChaoxingRunner
         {
             // 自检模式：不开界面，只验证资源与 PowerShell 引擎是否可用。
             // 用于排查"窗口没出来"这类问题 —— 直接运行看输出即可。
+            // --autorun [参数…]：启动界面后立刻执行一次 Run.ps1。
+            // 用途：
+            //   · 不想点按钮时直接开跑（例如做开机自启）
+            //   · 无人值守环境里验证内嵌脚本能否正常工作
+            // 走的路径与按钮完全相同，所以它通就等于按钮通。
+            // 例：ChaoxingRunner.exe --autorun -DryRun
+            //     ChaoxingRunner.exe --autorun -MaxLessons 2
+            if (args.Length > 0 && args[0] == "--autorun")
+            {
+                StringBuilder extra = new StringBuilder();
+                for (int i = 1; i < args.Length; i++)
+                {
+                    if (extra.Length > 0) { extra.Append(' '); }
+                    extra.Append(args[i]);
+                }
+                MainForm f = new MainForm();
+                f.Shown += delegate
+                {
+                    f.AutoRun = extra.ToString();
+                    f.RunAuto();
+                };
+                Application.Run(f);
+                return;
+            }
+
             if (args.Length > 0 && args[0] == "--diag")
             {
                 // 诊断模式：跑一次 Run.ps1 -LaunchOnly，把所有流的内容落盘。
