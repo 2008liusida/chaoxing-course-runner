@@ -75,7 +75,9 @@ function Enable-LessonVideoPlayback {
         [Parameter(Mandatory)]$Session,
         [IntPtr]$WindowHandle = [IntPtr]::Zero,
         [int]$VideoContextId = 0,
-        # 需要时把浏览器强制置前。默认不置前，以免妨碍操作终端。
+        # 保留参数以兼容旧调用，但当前实现不使用它：
+        # 置前只在"页面确实不可见"时发生（窗口被完全遮住或最小化），
+        # 那种情况本来就必须置前，否则 Chromium 会停掉视频。
         [switch]$Activate,
         # 把浏览器摆到屏幕左侧一半，便于与终端并排查看。
         [switch]$SideBySide
