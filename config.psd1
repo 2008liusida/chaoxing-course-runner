@@ -60,9 +60,6 @@ $PollSeconds = 1
 # 保持前台最稳妥。若你需要在跑的同时使用电脑，可在命令行用 -NoForeground 关闭。
 $KeepForeground = $true
 
-# 把浏览器摆到屏幕左侧一半，终端用右半边，便于同时看到两者。
-# 关掉则不动浏览器窗口位置。
-$SideBySide = $false
 
 # 启动时自动布局：浏览器占一侧，终端占另一侧，两者都看得见。
 $ArrangeWindows = $true

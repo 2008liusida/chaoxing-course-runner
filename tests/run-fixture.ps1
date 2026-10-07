@@ -13,7 +13,7 @@
     步骤：
       1. 用 tests\TestServer.psm1 起本地静态服务（不依赖 Python）
       2. 打开夹具页
-      3. 用 config.fixture.psd1 跑 Run.ps1
+      3. 用 tests\config.fixture.psd1 跑 Run.ps1
       4. 打印日志摘要
 
 .PARAMETER SkipServer
@@ -89,7 +89,7 @@ try {
 
     Write-Host '[信息] 运行 Run.ps1（夹具配置）' -ForegroundColor Gray
     & (Join-Path $root 'Run.ps1') `
-        -ConfigFile (Join-Path $root 'config.fixture.psd1') `
+        -ConfigFile (Join-Path $PSScriptRoot 'config.fixture.psd1') `
         -DebugPort $DebugPort `
         -LessonIds $LessonIds
 

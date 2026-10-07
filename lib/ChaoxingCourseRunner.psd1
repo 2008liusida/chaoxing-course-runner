@@ -48,7 +48,6 @@
         # ---- 日志与配置 ----
         'Write-RunnerLog'
         'Write-ProgressLine'
-        'Invoke-ClearDataPrompt'
         'Clear-ProgressLine'
         'Read-RunnerConfigFile'
         'Get-RunnerSettings'

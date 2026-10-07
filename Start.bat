@@ -1,4 +1,4 @@
-@echo off
+﻿@echo off
 rem ============================================================
 rem  Start.bat - main entry point
 rem
@@ -19,7 +19,7 @@ rem    Start.bat -LaunchOnly
 rem    Start.bat -LessonIds 1222994220,1222994221 -MaxLessons 2
 rem    Start.bat -NoForeground
 rem
-rem  This file is intentionally ASCII-only (see Run-Interactive.bat).
+rem  This file is intentionally ASCII-only (see Start.bat).
 rem ============================================================
 
 setlocal

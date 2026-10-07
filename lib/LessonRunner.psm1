@@ -113,8 +113,8 @@ function Invoke-Lesson {
                 VideoContextId = $videoCtx
             }
             # 用 PSObject 判断：配置文件里没写这一项时不应抛异常
-            if ($Settings.PSObject.Properties['SideBySide'] -and $Settings.SideBySide) {
-                $visArgs.SideBySide = $true
+            if ($Settings.PSObject.Properties['ArrangeWindows'] -and $Settings.ArrangeWindows) {
+                $visArgs.LeftHalf = $true
             }
             $vis = Enable-LessonVideoPlayback @visArgs
             if (-not $vis.Ok) {

@@ -180,6 +180,30 @@ if ($declMissing.Count -gt 0) {
 }
 
 
+
+# ---------------- 导出清单完整性 ----------------
+# 只数数量不够 —— 清单里可能有"幽灵导出"（写了名字但没有对应函数定义），
+# 调用时才报 CommandNotFound。这里逐个核对定义是否存在。
+$manifestPath = Join-Path $root 'lib\ChaoxingCourseRunner.psd1'
+$manText = [System.IO.File]::ReadAllText($manifestPath, (New-Object System.Text.UTF8Encoding($false)))
+$exportedNames = @()
+foreach ($m in [regex]::Matches($manText, "'([A-Z][\w-]+)'")) {
+    $exportedNames += $m.Groups[1].Value
+}
+$definedFns = @{}
+foreach ($mf in @(Get-ChildItem (Join-Path $root 'lib') -Filter '*.psm1' -File)) {
+    $mc = [System.IO.File]::ReadAllText($mf.FullName, (New-Object System.Text.UTF8Encoding($false)))
+    foreach ($m in [regex]::Matches($mc, '(?m)^\s*function\s+([A-Z][\w-]+)')) {
+        $definedFns[$m.Groups[1].Value] = $true
+    }
+}
+$ghosts = @($exportedNames | Where-Object { -not $definedFns.ContainsKey($_) })
+Assert-True '导出清单里的函数都有定义（无幽灵导出）' ($ghosts.Count -eq 0)
+if ($ghosts.Count -gt 0) {
+    Write-Host ('      幽灵导出: ' + ($ghosts -join ', ')) -ForegroundColor Red
+}
+Assert-True '导出函数确实可调用' (@($exportedNames | Where-Object { $cmds -contains $_ }).Count -eq $exportedNames.Count)
+
 # ---------------- Win32 函数与 DLL 归属 ----------------
 # 声明了方法但写错 DLL，症状与"没声明"一样：调用抛异常、被 catch 吞掉、
 # 功能静默退化。GetConsoleWindow 曾在 user32 与 kernel32 之间写错过。

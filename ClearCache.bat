@@ -1,4 +1,4 @@
-@echo off
+﻿@echo off
 rem ============================================================
 rem  ClearCache.bat - clear browser cache
 rem
@@ -16,7 +16,7 @@ rem
 rem  Do not run this while the tool is playing: the running
 rem  lesson will be interrupted.
 rem
-rem  This file is intentionally ASCII-only (see Run-Interactive.bat).
+rem  This file is intentionally ASCII-only (see Start.bat).
 rem ============================================================
 
 setlocal

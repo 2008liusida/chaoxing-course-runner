@@ -157,9 +157,10 @@
 | `$PlaybackRate` | `1.0` | 播放速率，**不建议改** |
 | `$PollSeconds` | `1` | 进度轮询间隔（秒），1 = 每秒刷新进度条 |
 | `$KeepForeground` | `$true` | 是否保证浏览器窗口可见 |
-| `$SideBySide` | `$false` | 播放时把浏览器保持在左半边（一般不用改） |
 | `$ArrangeWindows` | `$true` | 启动时自动布局：浏览器左半屏、终端右半屏，严丝合缝 |
 | `$SwitchMode` | `auto` | 切课方式，一般不用改 |
+| `$StartUrl` | 学习通登录页 | 启动浏览器时打开的地址 |
+| `$LogFile` | `logs\run.log` | 日志文件路径 |
 
 浏览器数据清理：双击 `ClearCache.bat`（也可加 `-All` 连配置目录一起删）。
 运行期间请勿清理 —— 脚本会先关闭工具浏览器，正在播的课会中断。
@@ -226,6 +227,9 @@
 （`knowledge/cards.html` → `ananas/modules/video/index.html`）：
 
 ```powershell
+# 0) 环境自检（也可直接双击 Diagnose.bat）
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\diagnose-env.ps1
+
 # 1) 语法/导出/配置校验（不需要浏览器）
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\module-smoke.ps1
 

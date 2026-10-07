@@ -24,7 +24,8 @@ chaoxing-runner/
 │  ├─ Chaoxing.psm1             平台页面：目录、当前课节、切课
 │  ├─ Video.psm1                平台播放器：定位视频帧、驱动播放
 │  └─ LessonRunner.psm1         单节课状态机（两个入口共用）
-├─ tests/                       离线自测（可删）
+├─ scripts/Clear-Cache.ps1      清理缓存的实际逻辑（ClearCache.bat 调用）
+├─ tests/                       离线自测（可删；含夹具与夹具配置）
 ├─ docs/                        本文档与平台契约
 ├─ browser-profile/             浏览器数据（自动生成，勿跨机拷贝）
 └─ logs/                        运行日志
@@ -174,7 +175,7 @@ Run.ps1                 流程决策：选哪些课节、播到什么时候停�
   │                          加 标签页级 Page.bringToFront
   │      ← 两步缺一不可，否则页面仍是 hidden
   │      ← 但不做 SetForegroundWindow：窗口可见即可，
-  │        抢焦点只会妨碍使用者操作终端（-SideBySide 可摆到屏幕一侧）
+  │        抢焦点只会妨碍使用者操作终端（启动时由 Arrange-Windows 摆到一侧）
   ├─ 找播放器层帧；找不到 → 计数，刷新一次，仍无则跳过该节
   ├─ 内容层已有 .ans-job-finished → 判定完成，退出
   ├─ 时长未知 → 调 play() 触发加载（学习通要靠 play 才加载）
@@ -226,7 +227,8 @@ Run.ps1                 流程决策：选哪些课节、播到什么时候停�
 
 | 脚本 | 覆盖 | 是否需要浏览器 |
 |---|---|---|
-| `tests/module-smoke.ps1` | 模块导出、选择器解析、配置校验与报错路径 | 否 |
+| `tests/diagnose-env.ps1` | 环境自检：文件完整性、执行策略、浏览器、端口、编码 | 否 |
+| `tests/module-smoke.ps1` | 模块导出完整性、Win32 声明与 DLL 归属、选择器解析、配置校验 | 否 |
 | `tests/check-jsonarray.ps1` | JSON 数组解析在 5.1/7.x 的行为 | 否 |
 | `tests/check-fixture.ps1` | 选择器与夹具结构是否对齐、切课 | 是（调试端口） |
 | `tests/run-fixture.ps1` | 端到端：识别 → 播放 → 登记 → 下一节 | 是（调试端口） |

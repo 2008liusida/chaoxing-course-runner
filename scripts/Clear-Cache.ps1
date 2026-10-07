@@ -19,11 +19,11 @@
     跳过确认，直接执行。
 
 .EXAMPLE
-    Clear-Cache.bat
+    ClearCache.bat
     询问后清理缓存目录。
 
 .EXAMPLE
-    Clear-Cache.bat -All
+    ClearCache.bat -All
     连整个 browser-profile 一起删除。
 #>
 

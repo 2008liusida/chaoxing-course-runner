@@ -88,8 +88,9 @@ function Enable-LessonVideoPlayback {
         # 置前只在"页面确实不可见"时发生（窗口被完全遮住或最小化），
         # 那种情况本来就必须置前，否则 Chromium 会停掉视频。
         [switch]$Activate,
-        # 把浏览器摆到屏幕左侧一半，便于与终端并排查看。
-        [switch]$SideBySide
+        # 播放期间把浏览器保持在左半屏（由 Arrange-Windows 按需传入）。
+        # 这不是"每轮重新布局"，只是保证播放时窗口仍在自己那一半。
+        [switch]$LeftHalf
     )
 
     $result = [pscustomobject]@{
@@ -99,24 +100,11 @@ function Enable-LessonVideoPlayback {
         Ok              = $false
     }
 
-    # ---- 0a. 并排摆放（独立步骤）----
-    # 必须在可见性快速返回之前做，否则页面已经 visible 时永远摆不到位。
-    # 用 SWP_NOACTIVATE，只改位置与大小，不抢焦点。
-    if ($SideBySide -and $WindowHandle -ne [IntPtr]::Zero) {
-        try {
-            $wa = New-Object CcrVis.Win+RECT
-            $okSpi = [CcrVis.Win]::SystemParametersInfo(0x0030, 0, [ref]$wa, 0)   # SPI_GETWORKAREA
-            if ($okSpi) {
-                $scrW = $wa.Right - $wa.Left
-                $scrH = $wa.Bottom - $wa.Top
-                [void][CcrVis.Win]::SetWindowPos($WindowHandle, [IntPtr]::Zero,
-                    $wa.Left, $wa.Top, [int]($scrW / 2), $scrH, 0x0010 -bor 0x0004)
-            } else {
-                Write-CdpDiag '取屏幕工作区失败，跳过并排摆放'
-            }
-        } catch {
-            Write-CdpDiag ('并排摆放失败: ' + $_.Exception.Message)
-        }
+    # ---- 0a. 保持在左半屏（可选）----
+    # 只做一次，且复用 Set-WindowHalf —— 它带不可见边框补偿与最大化处理，
+    # 比在这里另写一份摆放逻辑可靠（两处逻辑会互相覆盖，导致位置偏差）。
+    if ($LeftHalf -and $WindowHandle -ne [IntPtr]::Zero) {
+        $null = Set-WindowHalf -Handle $WindowHandle -Side 'left'
     }
 
     # ---- 0b. 先只读可见性 ----

@@ -140,7 +140,6 @@ function Get-RunnerSettings {
         PlaybackRate            = 1.0
         PollSeconds             = 1
         KeepForeground          = $true
-        SideBySide              = $false
         ArrangeWindows          = $true
         LogFile                 = 'logs\run.log'
     }

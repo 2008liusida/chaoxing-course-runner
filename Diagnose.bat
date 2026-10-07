@@ -1,4 +1,4 @@
-@echo off
+﻿@echo off
 rem ============================================================
 rem  Diagnose.bat - environment self-check
 rem
@@ -8,7 +8,7 @@ rem  It checks: file presence, Mark-of-the-Web flags, execution
 rem  policy, browser availability, port occupancy, script BOM,
 rem  and whether the module loads.
 rem
-rem  This file is intentionally ASCII-only (see Run-Interactive.bat).
+rem  This file is intentionally ASCII-only (see Start.bat).
 rem ============================================================
 
 setlocal
