@@ -12,14 +12,16 @@
 
     步骤：
       1. 用 tests\TestServer.psm1 起本地静态服务（不依赖 Python）
-      2. 打开夹具页
-      3. 用 tests\config.fixture.psd1 跑 Run.ps1
-      4. 打印日志摘要
+      2. 若调试端口上没有浏览器，自动起一个（用夹具专用配置目录，
+         不影响日常浏览器）
+      3. 打开夹具页
+      4. 用 tests\config.fixture.psd1 跑 Run.ps1
+      5. 打印日志摘要
 
 .PARAMETER SkipServer
     已经有本地服务在 8899 端口时使用。
 .PARAMETER DebugPort
-    浏览器调试端口，默认 9222（要求端口上已有浏览器实例）。
+    浏览器调试端口，默认 9222。端口上没有浏览器时会自动起一个。
 .PARAMETER LessonIds
     要跑的课节 id，默认取夹具里前两节。
 
@@ -63,13 +65,32 @@ if (-not $SkipServer) {
 }
 
 try {
-    # ---------------- 2. 打开夹具页 ----------------
+    # ---------------- 2. 确保调试端口上有浏览器 ----------------
+    # 端口上没有就自己起一个，用夹具专用配置目录。
+    # 这样本脚本自成一体：一条命令跑完，不需要先手动开浏览器。
+    $portAlive = $null
+    try { $portAlive = Invoke-RestMethod -Uri ("http://127.0.0.1:{0}/json/version" -f $DebugPort) -TimeoutSec 3 } catch { }
+
+    if (-not $portAlive) {
+        Write-Host ('[信息] 调试端口 ' + $DebugPort + ' 上没有浏览器，正在启动一个') -ForegroundColor Gray
+        Import-Module (Join-Path $root 'lib\ChaoxingCourseRunner.psd1') -Force -DisableNameChecking
+
+        $fxExe = Find-BrowserExe -Preferred 'msedge'
+        if (-not $fxExe) { throw '没找到 Edge 或 Chrome，无法起夹具浏览器' }
+        $fxProfile = Join-Path $PSScriptRoot 'fixture-profile'
+
+        if (-not (Start-DebugBrowser -Exe $fxExe -Port $DebugPort -ProfileDir $fxProfile -StartUrl 'about:blank')) {
+            throw ('夹具浏览器起不来（调试端口 ' + $DebugPort + ' 连不上）')
+        }
+    }
+
+    # ---------------- 3. 打开夹具页 ----------------
     Write-Host '[信息] 打开夹具页面' -ForegroundColor Gray
     $target = $null
     try {
         $target = Invoke-RestMethod -Method Put -Uri ("http://127.0.0.1:{0}/json/new?about:blank" -f $DebugPort) -TimeoutSec 8
     } catch {
-        throw "无法连接调试端口 $DebugPort（可先用 Run.ps1 -LaunchOnly 启动浏览器）: $($_.Exception.Message)"
+        throw ("无法连接调试端口 " + $DebugPort + "：" + $_.Exception.Message)
     }
 
     $ws = New-Object System.Net.WebSockets.ClientWebSocket
@@ -83,7 +104,7 @@ try {
     Start-Sleep -Seconds 6
     $ws.Dispose()
 
-    # ---------------- 3. 跑工具 ----------------
+    # ---------------- 4. 跑工具 ----------------
     $logPath = Join-Path $root 'logs\fixture.log'
     Remove-Item $logPath -Force -ErrorAction SilentlyContinue
 
@@ -93,7 +114,7 @@ try {
         -DebugPort $DebugPort `
         -LessonIds $LessonIds
 
-    # ---------------- 4. 结果摘要 ----------------
+    # ---------------- 5. 结果摘要 ----------------
     Write-Host ''
     Write-Host '===== 夹具日志摘要 =====' -ForegroundColor Cyan
     if (Test-Path $logPath) {

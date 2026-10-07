@@ -1,4 +1,4 @@
-# 平台契约（DOM Contract）
+﻿# 平台契约（DOM Contract）
 
 > **这份文档是本项目最重要的维护资料。**
 > 平台改版时，需要改的几乎只有 `lib/Selectors.psd1` 和这份文档。
@@ -90,6 +90,9 @@ studentstudy                          ← 顶层：目录、curChapterId、right
 | 课节列表 | `h5[id^=cur]` | `LessonNode` |
 | 课节行容器 | 状态圆点的父容器 `.ncells` | `LessonRow` |
 | 是否未完成 | 圆点 class 含 `orange` | `LessonStateDot` / `UnfinishedMark` |
+
+> 圆点在课节节点的**兄弟位置**（同在 `.ncells` 行容器内），
+> 判定时须先定位行容器再查，不能直接对课节节点 querySelector。
 | 切课 | 目录链接 href 含课节 id | `LessonLink` |
 
 ### 版本 B：`mooc2`（主机 `mooc1.chaoxing.com`，URL 带 `mooc2=1`）

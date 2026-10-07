@@ -110,19 +110,39 @@ function Get-LessonList {
     var title = (node.innerText || '').replace(/\s+/g, ' ').trim();
 
     // ---- 是否未完成 ----
+    // 状态标记不在课节节点自身里，而在它所在的那一行里：
+    //   legacy: <div class="ncells"><h5 id="cur...">标题</h5>
+    //             <span class="roundpoint orange01"></span></div>
+    //   mooc2 : 同一条目内带 <input class="jobUnfinishCount">
+    // 所以必须先找到行容器再往下查。
+    //
+    // 这里不能只查直接父节点 —— 真实页面里课节节点外面可能还套着一两层。
+    // 做法是逐级向上找：哪一级能查到状态标记，就用哪一级。
+    // 找不到就退回节点自身（兼容标记确实内嵌的结构）。
     var unfinished = false;
     var rawState = '';
     var unfinishCount = -1;
 
+    var row = node;
+    for (var up = 0; up < 4; up++) {
+      var foundDot = (typeof S.LessonStateDot === 'string' && S.LessonStateDot)
+        ? row.querySelector(S.LessonStateDot) : null;
+      var foundCnt = (typeof S.UnfinishedCount === 'string' && S.UnfinishedCount)
+        ? row.querySelector(S.UnfinishedCount) : null;
+      if (foundDot || foundCnt) { break; }
+      if (!row.parentElement) { row = node; break; }
+      row = row.parentElement;
+    }
+
     if (typeof S.LessonStateDot === 'string' && S.LessonStateDot) {
-      var dot = node.querySelector(S.LessonStateDot);
+      var dot = row.querySelector(S.LessonStateDot);
       if (dot) {
         rawState = dot.className || '';
         if (S.UnfinishedMark) { unfinished = rawState.indexOf(S.UnfinishedMark) >= 0; }
       }
     }
     if (typeof S.UnfinishedCount === 'string' && S.UnfinishedCount) {
-      var inp = node.querySelector(S.UnfinishedCount);
+      var inp = row.querySelector(S.UnfinishedCount);
       if (inp) {
         var v = parseInt(inp.value, 10);
         if (!isNaN(v)) {
