@@ -39,7 +39,6 @@ Section '1. 文件完整性'
 $required = @(
     'Run.ps1'
     'Start.bat'
-    'first-run-login.bat'
     'config.psd1'
     'lib\ChaoxingCourseRunner.psd1'
     'lib\CdpClient.psm1'
@@ -152,9 +151,9 @@ $profileDir = Join-Path $root 'browser-profile'
 if (Test-Path $profileDir) {
     $size = (Get-ChildItem $profileDir -Recurse -File -ErrorAction SilentlyContinue |
         Measure-Object -Property Length -Sum).Sum
-    Ok ('已存在浏览器配置目录（' + [math]::Round($size / 1MB, 1) + ' MB）—— 若登录过期，删掉它重跑 first-run-login.bat')
+    Ok ('已存在浏览器配置目录（' + [math]::Round($size / 1MB, 1) + ' MB）—— 若登录过期，重新双击 Start.bat 登录即可')
 } else {
-    Info '还没有浏览器配置目录 —— 属于首次使用，请先跑 first-run-login.bat 登录'
+    Info '还没有浏览器配置目录 —— 双击 Start.bat 启动时会自动创建并打开登录页'
 }
 
 # ---------------- 6. 编码与中文 ----------------

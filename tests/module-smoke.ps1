@@ -179,6 +179,43 @@ if ($declMissing.Count -gt 0) {
     Write-Host ('      缺失: ' + ($declMissing -join ', ')) -ForegroundColor Red
 }
 
+
+# ---------------- Win32 函数与 DLL 归属 ----------------
+# 声明了方法但写错 DLL，症状与"没声明"一样：调用抛异常、被 catch 吞掉、
+# 功能静默退化。GetConsoleWindow 曾在 user32 与 kernel32 之间写错过。
+$dllExpect = @{
+    'GetConsoleWindow'         = 'kernel32.dll'
+    'EnumWindows'              = 'user32.dll'
+    'GetWindowRect'            = 'user32.dll'
+    'SetWindowPos'             = 'user32.dll'
+    'ShowWindow'               = 'user32.dll'
+    'IsIconic'                 = 'user32.dll'
+    'IsZoomed'                 = 'user32.dll'
+    'IsWindowVisible'          = 'user32.dll'
+    'SetForegroundWindow'      = 'user32.dll'
+    'GetWindow'                = 'user32.dll'
+    'IsWindow'                 = 'user32.dll'
+    'GetWindowThreadProcessId' = 'user32.dll'
+    'SystemParametersInfo'     = 'user32.dll'
+    'DwmGetWindowAttribute'    = 'dwmapi.dll'
+}
+$dllWrong = @()
+foreach ($wf in $win32Files) {
+    if (-not (Test-Path $wf)) { continue }
+    $wc = [System.IO.File]::ReadAllText($wf, (New-Object System.Text.UTF8Encoding($false)))
+    foreach ($m in [regex]::Matches($wc, 'DllImport\("([\w\.]+)"\)\]\s*public static extern [\w\.]+ (\w+)\s*\(')) {
+        $dll = $m.Groups[1].Value
+        $fn = $m.Groups[2].Value
+        if ($dllExpect.ContainsKey($fn) -and $dllExpect[$fn] -ne $dll) {
+            $dllWrong += ($fn + ' 应在 ' + $dllExpect[$fn] + '，实为 ' + $dll)
+        }
+    }
+}
+Assert-True 'Win32 函数声明在正确的 DLL（写错会静默失败）' ($dllWrong.Count -eq 0)
+if ($dllWrong.Count -gt 0) {
+    Write-Host ('      ' + ($dllWrong -join '; ')) -ForegroundColor Red
+}
+
 # ---------------- 窗口布局相关函数 ----------------
 foreach ($fn in @('Arrange-Windows', 'Set-WindowHalf', 'Get-WindowFrameInsets', 'Get-TerminalWindowHandle', 'Get-ScreenWorkArea')) {
     Assert-True ('已导出 ' + $fn) ($cmds -contains $fn)

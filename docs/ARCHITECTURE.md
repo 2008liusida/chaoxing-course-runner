@@ -9,7 +9,6 @@ chaoxing-runner/
 ├─ Run-Interactive.ps1           交互式流程编排（分步骤引导，可选）
 ├─ Diagnose.bat                  环境自检（跑不起来时先双击这个）
 ├─ ClearCache.bat                清理浏览器缓存
-├─ first-run-login.bat           只启动浏览器并给出指引（可选）
 ├─ config.psd1                   使用者配置（唯一需要改的文件）
 ├─ lib/
 │  ├─ ChaoxingCourseRunner.psd1 模块清单：导出函数的唯一出处

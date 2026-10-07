@@ -633,9 +633,9 @@ foreach ($lesson in $toProcess) {
             Write-Bad ('连续 ' + $consecutiveFail + ' 节失败，判定为环境异常，停止运行。')
             Write-Info '常见原因：'
             Write-Info '  · 网络断开或代理不可用'
-            Write-Info '  · 学习通登录已过期（重新跑 first-run-login.bat）'
+            Write-Info '  · 学习通登录已过期（重新双击 Start.bat 登录）'
             Write-Info '  · 浏览器窗口被关闭'
-            Write-Info '弄好之后重新双击 Run-Interactive.bat，接着刷，刷完的不重刷。'
+            Write-Info '弄好之后重新双击 Start.bat，接着刷，刷完的不重刷。'
             Write-Log ('连续 ' + $consecutiveFail + ' 节失败，提前停止') 'ERROR'
             break
         }
