@@ -53,7 +53,7 @@ function Test-DirectoryInContext {
     .PARAMETER ContextId
         执行上下文 id；0 表示顶层主世界。
     .OUTPUTS
-        Hashtable：@{ Legacy = <int>; Mooc2 = <int> }（各自命中元素数量）
+        Hashtable：@{ Coursetree = <int>; Legacy = <int>; Mooc2 = <int> }（各自命中元素数量）
     #>
     [CmdletBinding()]
     param(
@@ -61,14 +61,20 @@ function Test-DirectoryInContext {
         [int]$ContextId = 0
     )
 
-    $expr = 'JSON.stringify({Legacy:document.querySelectorAll("h5[id^=cur]").length,Mooc2:document.querySelectorAll("div.posCatalog_select").length,HasCur:!!document.getElementById("curChapterId")})'
+    $expr = 'JSON.stringify({Coursetree:document.querySelectorAll("h4[id^=cur]").length,Legacy:document.querySelectorAll("h5[id^=cur]").length,Mooc2:document.querySelectorAll("div.posCatalog_select").length,HasCur:!!document.getElementById("curChapterId")})'
     $r = Invoke-CdpJs -Session $Session -Expression $expr -ContextId $ContextId
-    if ($r.Error -or -not $r.Value) { return @{ Legacy = 0; Mooc2 = 0; HasCur = $false } }
+    $empty = @{ Coursetree = 0; Legacy = 0; Mooc2 = 0; HasCur = $false }
+    if ($r.Error -or -not $r.Value) { return $empty }
     try {
         $o = $r.Value | ConvertFrom-Json
-        return @{ Legacy = [int]$o.Legacy; Mooc2 = [int]$o.Mooc2; HasCur = [bool]$o.HasCur }
+        return @{
+            Coursetree = [int]$o.Coursetree
+            Legacy     = [int]$o.Legacy
+            Mooc2      = [int]$o.Mooc2
+            HasCur     = [bool]$o.HasCur
+        }
     } catch {
-        return @{ Legacy = 0; Mooc2 = 0; HasCur = $false }
+        return $empty
     }
 }
 
@@ -82,11 +88,12 @@ function Resolve-Platform {
         Import-CourseSelectors 的原始返回（含 common 与各版本块）。
     .OUTPUTS
         PSCustomObject：
-          Version       'legacy' / 'mooc2' / ''（识别失败）
+          Version       'legacy' / 'mooc2' / 'coursetree' / ''（识别失败）
           Selectors     合并后的扁平选择器表
           DirContextId  目录所在执行上下文 id（0 = 顶层）
           LegacyCount   legacy 课节节点数
           Mooc2Count    mooc2 目录条目数
+          CoursetreeCount  coursetree 课节节点数
     .NOTES
         探测顺序：先看顶层，再逐个 iframe。
         两个版本都可能把目录放在 iframe 里，所以不能只查顶层。
@@ -98,15 +105,29 @@ function Resolve-Platform {
     )
 
     $result = [pscustomobject]@{
-        Version      = ''
-        Selectors    = $null
-        DirContextId = 0
-        LegacyCount  = 0
-        Mooc2Count   = 0
+        Version        = ''
+        Selectors      = $null
+        DirContextId   = 0
+        LegacyCount    = 0
+        Mooc2Count     = 0
+        CoursetreeCount = 0
     }
 
     # ---- 1. 顶层 ----
     $top = Test-DirectoryInContext -Session $Session -ContextId 0
+
+    # coursetree 要排在 legacy 前面判断：它同样带 #curChapterId，
+    # 但课节节点是 h4。若先判 legacy，会因节点数是 0 而落到 mooc2 分支，
+    # 最后报"不认识的版本"。
+    if ($top.Coursetree -gt 0) {
+        $result.Version = 'coursetree'
+        $result.CoursetreeCount = $top.Coursetree
+        $result.DirContextId = 0
+        $result.Selectors = Merge-SelectorTable -Raw $RawSelectors -VersionName 'coursetree'
+        Write-CdpDiag ('检测到 coursetree 版本（课节节点 ' + $top.Coursetree + ' 个）')
+        return $result
+    }
+
     if ($top.Legacy -gt 0 -and $top.HasCur) {
         $result.Version = 'legacy'
         $result.LegacyCount = $top.Legacy

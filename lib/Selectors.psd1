@@ -72,6 +72,35 @@
         UnfinishedBy     = 'job-count'
     }
 
+    # ============ 版本 C：coursetree（mooc1-2 主机，老式 DOM + 任务点计数）============
+    # 实测于燕山大学的课程页（2026-10）：
+    #   主机 mooc1-2.chaoxing.com，路径 /mooc-ans/mycourse/studentstudy
+    #   课节节点是 h4（不是 legacy 的 h5），行容器 .ncells，
+    #   未完成判据是隐藏 input.jobUnfinishCount（不是状态圆点）。
+    #   目录在顶层文档，切课仍用 getTeacherAjax。
+    # 可以理解为"legacy 的结构 + mooc2 的判据"，所以单独列一版，
+    # 免得改动 legacy/mooc2 时互相牵连。
+    coursetree = @{
+        # 目录容器（便于排障时定位）
+        DirectoryRoot    = '#coursetree'
+        # 课节节点
+        LessonNode       = 'h4[id^=cur]'
+        # 课节行容器
+        LessonRow        = '.ncells'
+        # 未完成任务点数所在的隐藏 input
+        UnfinishedCount  = 'input.jobUnfinishCount'
+        # 从节点 id 解析课节 id 时要剥掉的前缀
+        LessonIdPrefix   = 'cur'
+        # 当前课节
+        CurrentLessonId  = '#curChapterId'
+        # 当前课节的标记类
+        ActiveMark       = 'currents'
+        # 目录是否位于 iframe 内
+        DirectoryInFrame = $false
+        # 判断"是否未完成"的方式：'job-count' = 看 jobUnfinishCount 的值
+        UnfinishedBy     = 'job-count'
+    }
+
     # ============ 两版共用 ============
     common = @{
         CourseId         = '#curCourseId'
@@ -99,6 +128,7 @@
             '#curChapterId'
             'div.posCatalog_select'
             'h5[id^=cur]'
+            'h4[id^=cur]'
         )
     }
 }
