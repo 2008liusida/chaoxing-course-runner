@@ -370,7 +370,9 @@ function New-CdpSession {
     try { $ws.Options.SetRequestHeader('Origin', '') } catch { }
 
     $task = $ws.ConnectAsync([Uri]$Page.webSocketDebuggerUrl, [System.Threading.CancellationToken]::None)
-    if (-not $task.Wait(10000)) { throw "WebSocket 连接超时: $($Page.webSocketDebuggerUrl)" }
+    # 25 秒：页面在播视频时渲染进程很忙，建会话会明显变慢。
+    # 原来 10 秒会在这里抛超时，上层看到的是"读不到播放器状态"。
+    if (-not $task.Wait(25000)) { throw "WebSocket 连接超时: $($Page.webSocketDebuggerUrl)" }
     if ($ws.State -ne [System.Net.WebSockets.WebSocketState]::Open) { throw "WebSocket 未打开: $($ws.State)" }
 
     $session = [pscustomobject]@{
@@ -469,7 +471,8 @@ function Send-Cdp {
         $true,
         [System.Threading.CancellationToken]::None
     )
-    if (-not $send.Wait(10000)) { throw "CDP 发送超时: $Method" }
+    # 同上：播放期间渲染进程忙，发送响应会慢。
+    if (-not $send.Wait(20000)) { throw "CDP 发送超时: $Method" }
 
     # FireAndForget：命令已发出，不等响应直接返回。
     #

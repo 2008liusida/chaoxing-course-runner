@@ -103,7 +103,6 @@ function Invoke-Lesson {
     # 不能一读到不一致就判本节失败。必须在循环外初始化：
     # 本模块开了 Set-StrictMode -Version Latest，未初始化的变量自增会抛错。
     $awayPolls = 0
-    $reloadTried = $false
     $playbackStarted = $false
     $lastPosition = -1.0
     $stallCount = 0
@@ -164,14 +163,25 @@ function Invoke-Lesson {
                 return $true
             }
 
-            if ($noVideoPolls -eq 6 -and -not $reloadTried) {
-                $reloadTried = $true
-                Say '连续读不到视频帧，刷新页面重试一次' 'WARN'
-                try { Send-Cdp -Session $Session -Method 'Page.reload' -Params @{} | Out-Null } catch { }
-                Start-Sleep -Seconds 12
+            # 读不到视频帧时**不要刷新页面**。
+            # 踩过的坑：刷新会把已经播过的进度清零（未完成的视频不允许拖拽），
+            # 于是越救越糟；而且刷新会让这一节后面所有 CDP 调用都变慢，
+            # 连带把下一节的切课也拖垮。宁可多等，也不要重来。
+            #
+            # 改成：间隔性地重新触发一次切课（等价于"再点一次目录"），
+            # 这比刷新温和，且不会清零进度。
+            if (($noVideoPolls % 8) -eq 0) {
+                Say ("连续读不到视频帧（第 " + $noVideoPolls + " 轮），重新触发一次切课") 'WARN'
+                try {
+                    Switch-Lesson -Session $Session -Selectors $Selectors -LessonId $Lesson.Id | Out-Null
+                } catch {
+                    Write-CdpDiag ('重新切课失败: ' + $_.Exception.Message)
+                }
+                Start-Sleep -Seconds 6
                 continue
             }
-            if ($noVideoPolls -ge 14) {
+            if ($noVideoPolls -ge 30) {
+                # 约 3 分钟还读不到，才是真的没有视频（作业/讨论/测验类任务点）
                 Say ("该课节没有可播放的视频（可能是作业/讨论/测验类任务点），跳过: " + $Lesson.Id) 'WARN'
                 return $false
             }
