@@ -99,91 +99,135 @@ function Get-ChapterTree {
     $js = @"
 (function(){
   var nodeSel = '$n', rowSel = '$r', cntSel = '$c', prefix = '$p2', rootSpec = '$rootSelJs';
-  var out = [];
 
-  function titleOf(el){
-    if (!el) return '';
-    var h = el.querySelector('h1,h2,h3,h4,h5,h6,.chapterName,.sectionName');
-    var s = h ? (h.innerText || '') : (el.innerText || '');
-    return s.replace(/\s+/g, ' ').trim();
-  }
-  function lessonFromRow(row){
-    var node = row.querySelector(nodeSel);
-    if (!node) return null;
-    var id = String(node.id || '').replace(new RegExp('^' + prefix), '');
-    if (!id) return null;
-    var cnt = cntSel ? row.querySelector(cntSel) : null;
-    // 课节标题：去掉前导的序号数字
-    var raw = (node.innerText || '').replace(/\s+/g, ' ').trim();
-    return {
-      Id: id,
-      Title: raw,
-      UnfinishedCount: cnt ? parseInt(cnt.value, 10) : -1
-    };
-  }
-
-  // 章块：目录根节点的直接子元素，class 含 cells 但不是 ncells。
-  // 必须限定在目录根内 —— 在整个文档里找 ".cells" 会匹配到
-  // 包住全部章节的外层容器，结果 4 章被读成 1 章。
+  // 目录根：优先用选择器给的，其次找常见容器，最后退回 body
   var dirRoot = null;
   if (rootSpec) { try { dirRoot = document.querySelector(rootSpec); } catch(e) { dirRoot = null; } }
   if (!dirRoot) { dirRoot = document.querySelector('#coursetree') || document.body; }
 
-  var chapters = [];
-  var kids = dirRoot.children;
-  for (var i = 0; i < kids.length; i++){
-    var cls = ' ' + String(kids[i].className) + ' ';
-    if (cls.indexOf(' cells ') >= 0 && cls.indexOf(' ncells ') < 0) { chapters.push(kids[i]); }
-  }
-  // 兜底：直接子元素里没有章块（层级不同），再在根内找一层
-  if (!chapters.length){
-    var inner = dirRoot.querySelectorAll('div[class]');
-    for (var q = 0; q < inner.length; q++){
-      var cls2 = ' ' + String(inner[q].className) + ' ';
-      if (cls2.indexOf(' cells ') >= 0 && cls2.indexOf(' ncells ') < 0) { chapters.push(inner[q]); }
-    }
+  function txt(el, max){
+    if (!el) return '';
+    var s = (el.innerText || '').replace(/\s+/g, ' ').trim();
+    return s.substring(0, max || 80);
   }
 
-  if (!chapters.length){
-    // 没有分层：整份目录当成一章
-    var flat = rowSel ? document.querySelectorAll(rowSel) : [];
-    var ls = [];
-    for (var j = 0; j < flat.length; j++){
-      var o = lessonFromRow(flat[j]);
-      if (o) ls.push(o);
-    }
-    if (ls.length){ out.push({ Title: '(全部章节)', Lessons: ls }); }
-    return JSON.stringify(out);
+  // 是不是"章"：三种版本的章各有特征，逐个试
+  function isChapter(el){
+    var cls = ' ' + String(el.className) + ' ';
+    // legacy / coursetree：div.cells（但节是 div.ncells，别认错）
+    if (cls.indexOf(' cells ') >= 0 && cls.indexOf(' ncells ') < 0) return true;
+    // mooc2：章与节同名，靠 firstLayer 区分
+    if (cls.indexOf(' posCatalog_select ') >= 0 && cls.indexOf(' firstLayer ') >= 0) return true;
+    return false;
   }
 
-  for (var k = 0; k < chapters.length; k++){
-    var ch = chapters[k];
-    var ls2 = [];
-
-    // 章块自己带课节 id 的情况（该章只有一节，标题即课节）
-    if (ch.querySelector(nodeSel)){
-      var self = lessonFromRow(ch);
-      if (self) ls2.push(self);
+  // 是不是"课节"：id 带 cur 前缀最可靠；其次是有 jobUnfinishCount 的那一行
+  function lessonIdOf(el){
+    if (!el) return '';
+    var id = String(el.id || '');
+    if (id.indexOf(prefix) === 0 && id.length > prefix.length) {
+      return id.substring(prefix.length);
     }
-    var rows = rowSel ? ch.querySelectorAll(rowSel) : [];
-    for (var m = 0; m < rows.length; m++){
-      var o2 = lessonFromRow(rows[m]);
-      if (!o2) continue;
+    var node = nodeSel ? el.querySelector(nodeSel) : null;
+    if (node) {
+      var nid = String(node.id || '');
+      if (nid.indexOf(prefix) === 0 && nid.length > prefix.length) {
+        return nid.substring(prefix.length);
+      }
+    }
+    return '';
+  }
+
+  function isLesson(el){
+    if (isChapter(el)) return false;
+    return lessonIdOf(el) !== '';
+  }
+
+  function countOf(el){
+    if (!cntSel) return -1;
+    var c = el.querySelector(cntSel);
+    if (!c && String(el.className).indexOf('posCatalog_select') >= 0) {
+      // mooc2 的计数可能挂在紧邻的兄弟里
+      var p = el.parentElement;
+      if (p) c = p.querySelector(cntSel);
+    }
+    return c ? parseInt(c.value, 10) : -1;
+  }
+
+  // ---- 按文档顺序线性扫描 ----
+  // 三种版本都是"章在前、它下面的节紧随其后"，所以顺序扫一遍就能分组，
+  // 不必去猜 DOM 嵌套关系（那要针对每种版本写一套规则）。
+  var items = [];
+  if (rowSel) {
+    var rs = dirRoot.querySelectorAll(rowSel);
+    for (var a = 0; a < rs.length; a++) items.push(rs[a]);
+  }
+  if (nodeSel) {
+    var ns = dirRoot.querySelectorAll(nodeSel);
+    for (var b = 0; b < ns.length; b++){
+      // 去重：节点可能已经被 rowSel 收进去了
       var dup = false;
-      for (var d = 0; d < ls2.length; d++){ if (ls2[d].Id === o2.Id) { dup = true; break; } }
-      if (!dup) ls2.push(o2);
+      for (var d = 0; d < items.length; d++){ if (items[d] === ns[b]) { dup = true; break; } }
+      if (!dup) items.push(ns[b]);
     }
-
-    // 章标题：去掉块内各课节文字后的剩余部分通常是章名
-    var chTitle = '';
-    var hd = ch.querySelector('h1,h2,h3,.chapterName');
-    if (hd) { chTitle = (hd.innerText || '').replace(/\s+/g, ' ').trim(); }
-    if (!chTitle) {
-      var first = ls2.length ? ls2[0].Title : '';
-      chTitle = first;
-    }
-    out.push({ Title: chTitle, Lessons: ls2 });
   }
+  // 章块也可能是 nodeSel 命中的（mooc2），补上
+  var cs = dirRoot.querySelectorAll('div[class]');
+  for (var e2 = 0; e2 < cs.length; e2++){
+    if (!isChapter(cs[e2])) continue;
+    var dup2 = false;
+    for (var f = 0; f < items.length; f++){ if (items[f] === cs[e2]) { dup2 = true; break; } }
+    if (!dup2) items.push(cs[e2]);
+  }
+
+  // 按文档顺序排。compareDocumentPosition 是标准做法，
+  // 比拿 offsetTop 之类的布局信息可靠。
+  items.sort(function(x, y){
+    if (x === y) return 0;
+    var r = x.compareDocumentPosition(y);
+    if (r & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
+    if (r & Node.DOCUMENT_POSITION_PRECEDING) return 1;
+    return 0;
+  });
+
+  var out = [];
+  var cur = null;
+  var seenId = {};
+
+  for (var i = 0; i < items.length; i++){
+    var el = items[i];
+    if (isChapter(el)) {
+      cur = { Title: txt(el, 60), Lessons: [] };
+      out.push(cur);
+      continue;
+    }
+    var id = lessonIdOf(el);
+    if (!id) continue;
+    if (seenId[id]) continue;
+    seenId[id] = 1;
+    if (!cur) { cur = { Title: '(未分章)', Lessons: [] }; out.push(cur); }
+    cur.Lessons.push({
+      Id: id,
+      Title: txt(el, 70),
+      UnfinishedCount: countOf(el)
+    });
+  }
+
+  // 一个课节都没扫到：退回"整份目录当一章"，至少别返回空
+  var total = 0;
+  for (var k = 0; k < out.length; k++) total += out[k].Lessons.length;
+  if (total === 0) {
+    var all = nodeSel ? dirRoot.querySelectorAll(nodeSel) : [];
+    var flat = [];
+    for (var m = 0; m < all.length; m++){
+      var fid = lessonIdOf(all[m]);
+      if (!fid || seenId[fid]) continue;
+      seenId[fid] = 1;
+      flat.push({ Id: fid, Title: txt(all[m], 70), UnfinishedCount: countOf(all[m]) });
+    }
+    if (flat.length) out = [{ Title: '(全部章节)', Lessons: flat }];
+  }
+
   return JSON.stringify(out);
 })()
 "@

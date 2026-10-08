@@ -55,13 +55,38 @@
 .PARAMETER StopBrowserWhenDone
     全部跑完后关闭本工具启动的浏览器实例。
 
+.PARAMETER From
+    从哪一节开始听。可以写章号（"2"）或某一节（"1.3"）。
+    不写就是在运行时询问。
+
+.PARAMETER To
+    听到哪一节为止。写法同 -From。不写 = 一直到最后。
+
+.PARAMETER ListChapters
+    只把课程目录按章节列出来就退出，不播放。
+
+.PARAMETER All
+    全听：不询问范围，直接处理目录里所有未完成课节。
+
 .EXAMPLE
     .\Run.ps1 -LaunchOnly
     只把浏览器开起来（例如想先登录、稍后再跑）。
 
 .EXAMPLE
     .\Run.ps1
-    自动播完所有未完成课节。
+    摆出课程目录，问你从哪一节听到哪一节，然后开始。
+
+.EXAMPLE
+    .\Run.ps1 -All
+    全听：不询问，直接处理所有未完成课节。
+
+.EXAMPLE
+    .\Run.ps1 -From 1.3 -To 2.1
+    只听 1.3 到 2.1 这一段。
+
+.EXAMPLE
+    .\Run.ps1 -ListChapters
+    只看看这门课有哪些章节。
 
 .EXAMPLE
     .\Run.ps1 -DryRun
@@ -98,7 +123,10 @@ param(
     [string]$From,
     [string]$To,
     # 只列出目录就退出，不播放。想先看看有哪些章节时用。
-    [switch]$ListChapters
+    [switch]$ListChapters,
+    # 全听：不询问范围，直接处理目录里所有未完成课节。
+    # 不指定这个、也没写 -From/-To 时，会先摆出目录再问从哪听到哪。
+    [switch]$All
 )
 
 $ErrorActionPreference = 'Stop'
@@ -421,6 +449,28 @@ function Build-LessonQueue {
     return $queue
 }
 
+# 问使用者一个问题，拿一行回答。
+# 单独抽出来是为了两件事：
+#   · 非交互场景（管道传入、没有控制台）下 Read-Host 会抛错，这里兜住
+#   · 允许直接回车表示"用默认值"，不用让人对着必填项发愁
+function Read-Answer {
+    param(
+        [Parameter(Mandatory)][string]$Prompt,
+        [string]$DefaultText = ''
+    )
+    try {
+        $raw = Read-Host $Prompt
+    } catch {
+        # 没有交互终端（例如被管道驱动）时退回默认值，不要让脚本崩
+        Write-CdpDiag ('Read-Host 失败，用默认值: ' + $_.Exception.Message)
+        return $DefaultText
+    }
+    if ($null -eq $raw) { return $DefaultText }
+    $raw = ([string]$raw).Trim()
+    if ($raw -eq '') { return $DefaultText }
+    return $raw
+}
+
 # 课节处理逻辑由 lib\LessonRunner.psm1 提供。
 # 两个入口共用同一份实现，避免各自演化导致行为不一致。
 # 调用时通过 -Log 注入本脚本的日志出口。
@@ -704,10 +754,16 @@ try {
         exit $EXIT_OK
     }
 
-    # ---- 应用 -From / -To 范围 ----
+    # ---- 决定本次处理哪一段 ----
+    # 三种来源，优先级从高到低：
+    #   1) 命令行 / 配置里写死的 -From / -To
+    #   2) -All：明确表示全听，不询问
+    #   3) 都不给：摆出目录，问使用者从哪听到哪（直接回车 = 全听）
     $range = $null
-    if (-not [string]::IsNullOrWhiteSpace([string]$cfg.From) -or
-        -not [string]::IsNullOrWhiteSpace([string]$cfg.To)) {
+    $hasExplicitRange = (-not [string]::IsNullOrWhiteSpace([string]$cfg.From)) -or
+                        (-not [string]::IsNullOrWhiteSpace([string]$cfg.To))
+
+    if ($hasExplicitRange) {
         $range = Resolve-LessonRange -Chapters $tree.Chapters -From ([string]$cfg.From) -To ([string]$cfg.To)
         if (-not $range.Ok) {
             Write-Log ('范围没解析成功：' + $range.Message) 'ERROR'
@@ -717,22 +773,54 @@ try {
         Write-Log ('本次范围：' + $range.FromText)
         Write-Log ('         到 ' + $range.ToText + '（共 ' + $range.LessonIds.Count + ' 节）')
     }
+    elseif (-not $All -and -not $DryRun -and $tree.ChapterCount -gt 0) {
+        Write-Log ''
+        Write-Log '要从哪一节听到哪一节？（直接回车 = 全听）' 'WARN'
+        Write-Log '  写法：章号 "2"   某一节 "1.3"   也可以只填起点' 'WARN'
 
-    $queue = @(Build-LessonQueue -Session $session -Limit ([int]$cfg.MaxLessons))
+        $a = Read-Answer -Prompt '  从' -DefaultText ''
+        $b = Read-Answer -Prompt '  到（直接回车 = 最后一节）' -DefaultText ''
 
-    # 范围过滤：在队列上按 id 取交集，保持目录顺序
+        if ($a -eq '' -and $b -eq '') {
+            Write-Log '好，全听。'
+        } else {
+            $range = Resolve-LessonRange -Chapters $tree.Chapters -From $a -To $b
+            if (-not $range.Ok) {
+                Write-Log ('范围没解析成功：' + $range.Message) 'ERROR'
+                Write-Log '这次先按全听处理；想指定范围可以重跑并写 -From / -To。' 'WARN'
+                $range = $null
+            } else {
+                Write-Log ('本次范围：' + $range.FromText)
+                Write-Log ('         到 ' + $range.ToText + '（共 ' + $range.LessonIds.Count + ' 节）')
+            }
+        }
+    }
+
+    # 先按范围收窄，再按 MaxLessons 截断。
+    # 顺序不能反：Build-LessonQueue 里会先按 -Limit 截断，
+    # 若在外面才做范围过滤，选中的节一旦不在被截断的那一段里，
+    # 队列就空了（实测 -From 2 -To 3 配 -MaxLessons 1 会变成 0 节）。
+    # 这里传 Limit 0（不截断），拿到完整待处理列表，过滤完再自己截。
+    $queue = @(Build-LessonQueue -Session $session -Limit 0)
+
+    # 范围过滤：按 id 取交集，保持目录顺序
     if ($range -and $range.Ok) {
         $want = @{}
         foreach ($id in $range.LessonIds) { $want[[string]$id] = $true }
         $queue = @($queue | Where-Object { $want.ContainsKey([string]$_.Id) })
     }
+
+    # 截断放在最后
+    $limit = [int]$cfg.MaxLessons
+    if ($limit -gt 0 -and $queue.Count -gt $limit) { $queue = $queue[0..($limit - 1)] }
     if ($queue.Count -eq 0) {
         $unfinished = @($allLessons | Where-Object { $_.Unfinished })
         if ($unfinished.Count -eq 0) {
             Write-Log ("课程目录共 " + $allLessons.Count + " 节，全部已通过。") 'OK'
             exit $EXIT_OK
         }
-        Write-Log ("目录里有 " + $unfinished.Count + " 节未完成，但没能生成待处理队列（检查 -LessonIds 是否写错）") 'ERROR'
+        Write-Log ("目录里有 " + $unfinished.Count + " 节未完成，但没有一节落在本次范围内。") 'ERROR'
+        Write-Log '把范围放宽一些，或者不带 -From / -To 全听。' 'ERROR'
         exit $EXIT_NO_DIRECTORY
     }
 
