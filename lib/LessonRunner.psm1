@@ -96,6 +96,8 @@ function Invoke-Lesson {
     $replayLeft = [int]$Settings.MaxReplayPerLesson
     $deadline = (Get-Date).AddMinutes([double]$Settings.MaxWaitMinutesPerLesson)
     $noVideoPolls = 0
+    # 本节出现过多少次"完成标记与播放进度不符"。只提醒一次，避免刷屏。
+    $fakeJobMark = 0
     # 连续多少轮发现"页面停在别的课节"。
     # 切换课节时 #curChapterId 会短暂保留旧值，所以要容许几轮，
     # 不能一读到不一致就判本节失败。必须在循环外初始化：
@@ -178,19 +180,56 @@ function Invoke-Lesson {
         $noVideoPolls = 0
         $awayPolls = 0
 
-        # ---- 平台是否已登记完成 ----
-        $cardsCtx = Get-CardsContext -Session $Session -Selectors $Selectors
-        if ($cardsCtx -gt 0 -and (Test-JobFinished -Session $Session -Selectors $Selectors -ContextId $cardsCtx)) {
-            Clear-ProgressLine
-            Say '任务点已完成' 'OK'
-            return $true
-        }
-
+        # ---- 读播放器状态（先读，下面判断完成时要靠它交叉验证）----
         $state = Get-VideoState -Session $Session -ContextId $videoCtx
         if (-not $state.Ok) {
             Say ("读不到播放器状态（" + $state.Error + "），稍后重试") 'DEBUG'
             Start-Sleep -Seconds 6
             continue
+        }
+
+        # ---- 平台是否已登记完成 ----
+        # 这里必须和播放位置交叉验证，不能只看那一个 DOM 标记。
+        # 踩过的坑：.ans-job-finished 在某些版本里不可靠 —— 课节刚点开、
+        # 视频一秒没播，DOM 里就已经有这个元素了。早先只看它，
+        # 于是 12 分钟的视频在第 19 秒就被判成"任务点已完成"，
+        # 日志记了一堆"完成"，实际一节都没听完。
+        #
+        # 现在的规矩：
+        #   · 视频已播够规定比例（默认 90%，页面写明"观看时长需 ≥ 总时长的 90%"）
+        #     -> 标记可信，算完成
+        #   · 视频几乎没播（不到 15%）-> 标记不可信，忽略它，继续老老实实播
+        #   · 两者之间 -> 记一笔诊断，按"未完成"处理，把剩下的播完再说
+        # 宁可多播一遍，也不能谎报完成 —— 谎报的代价是使用者以为刷完了。
+        $cardsCtx = Get-CardsContext -Session $Session -Selectors $Selectors
+        $jobDone = ($cardsCtx -gt 0) -and
+            (Test-JobFinished -Session $Session -Selectors $Selectors -ContextId $cardsCtx)
+        if ($jobDone) {
+            $watched = 0.0
+            if ($state.Duration -gt 0) { $watched = $state.Current / $state.Duration }
+            $needRatio = 0.90
+
+            if ($state.Duration -le 0) {
+                # 时长都没读到，无从判断 —— 不当成完成
+                Write-CdpDiag ('课节 ' + $Lesson.Id + ' 出现完成标记，但读不到时长，按未完成处理')
+            } elseif ($watched -ge $needRatio) {
+                Clear-ProgressLine
+                Say ('任务点已完成（已观看 ' + [int]($watched * 100) + '%）') 'OK'
+                return $true
+            } elseif ($watched -lt 0.15) {
+                # 刚点开就带着完成标记 —— 这个标记不可信
+                if ($fakeJobMark -eq 0) {
+                    Say ('注意：本节显示"已完成"标记，但视频只播了 ' + [int]($watched * 100) +
+                         '%，与标记不符，按未完成处理，继续播放') 'WARN'
+                    Write-CdpDiag ('课节 ' + $Lesson.Id + ' 完成标记可疑: watched=' +
+                        [math]::Round($watched, 3) + ' current=' + [math]::Round($state.Current, 1) +
+                        ' duration=' + [math]::Round($state.Duration, 1))
+                }
+                $fakeJobMark++
+            } else {
+                Write-CdpDiag ('课节 ' + $Lesson.Id + ' 完成标记与进度不一致: 已播 ' +
+                    [int]($watched * 100) + '%，继续播完')
+            }
         }
 
         # ---- 时长未就绪：先触发播放（学习通要靠 play() 才开始加载）----
@@ -275,11 +314,21 @@ function Invoke-Lesson {
         if ($state.Current -ge ($state.Duration - 2)) {
             Say '已播到结尾，等待平台登记完成状态…'
 
+            # 已播到结尾，所以此时 DOM 标记是可信的 —— 位置本身已经证明播完了。
+            # 这里同时看"任务点图标"和"课节计数"，任一显示已完成即认。
             $registered = $false
             for ($i = 0; $i -lt 8; $i++) {
                 Start-Sleep -Seconds 5
                 $c = Get-CardsContext -Session $Session -Selectors $Selectors
-                if ($c -gt 0 -and (Test-JobFinished -Session $Session -Selectors $Selectors -ContextId $c)) { $registered = $true; break }
+                if ($c -gt 0) {
+                    if (Test-JobFinished -Session $Session -Selectors $Selectors -ContextId $c) { $registered = $true; break }
+                    # 图标 class 不再含 clear 也说明平台认了
+                    $ic = Get-JobIconClass -Session $Session -Selectors $Selectors -ContextId $c
+                    $clearMark = [string]$Selectors.JobIconClear
+                    if ($ic -and $clearMark -and ($ic -notmatch [regex]::Escape($clearMark))) {
+                        $registered = $true; break
+                    }
+                }
                 $l = Get-LessonById -Session $Session -Selectors $Selectors -LessonId $Lesson.Id
                 if ($l -and -not $l.Unfinished) { $registered = $true; break }
             }
