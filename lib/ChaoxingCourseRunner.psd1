@@ -115,6 +115,8 @@
         'Get-SelectorsJs'
         'Get-SelectorValue'
         'Get-LessonList'
+        'Get-ChapterTree'
+        'Resolve-LessonRange'
         'Get-LessonById'
         'Get-CurrentLessonId'
         'Get-UrlLessonId'

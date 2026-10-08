@@ -51,6 +51,333 @@ function Get-SelectorsJs {
     return 'var S={' + ($pairs -join ',') + '};'
 }
 
+function Get-ChapterTree {
+    <#
+    .SYNOPSIS
+        读出课程目录的章节结构（章 -> 节），带课节 id。
+    .DESCRIPTION
+        为什么需要它：Get-LessonList 给的是平铺的课节列表，没有章节归属。
+        使用者往往只想听某几章，或者从某一节听到另一节，所以得先把层级读出来。
+
+        结构取自目录容器：章是 class 含 "cells" 的块，节是它里面的
+        "ncells"。这个结构在 legacy / coursetree 两版里一致
+        （mooc2 版目录在 iframe 内且是三层，走另一条路，见 Selectors.psd1）。
+
+        章的标题取该块内第一个标题元素的文字；某些课程章块本身带课节 id，
+        那种情况下章的首节就是它，也要算进去，不能漏。
+    .PARAMETER Session
+        CDP 会话。
+    .PARAMETER Selectors
+        合并后的扁平选择器表。
+    .PARAMETER DirContextId
+        目录所在执行上下文；顶层为 0。
+    .OUTPUTS
+        PSCustomObject：@{ ChapterCount; Chapters }
+        Chapters 为 @{ Index; Title; LessonCount; Lessons }，
+        Lessons 为 @{ Index; Id; Title; UnfinishedCount; Unfinished }。
+        返回对象而非数组，避免 PowerShell 展开数组的老问题。
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$Session,
+        [Parameter(Mandatory)][hashtable]$Selectors,
+        [int]$DirContextId = 0
+    )
+
+    $nodeSel = [string]$Selectors.LessonNode
+    $rowSel = if ($Selectors.ContainsKey('LessonRow')) { [string]$Selectors.LessonRow } else { '' }
+    $cntSel = if ($Selectors.ContainsKey('UnfinishedCount')) { [string]$Selectors.UnfinishedCount } else { '' }
+    $prefix = if ($Selectors.ContainsKey('LessonIdPrefix')) { [string]$Selectors.LessonIdPrefix } else { 'cur' }
+
+    $rootSel = if ($Selectors.ContainsKey('DirectoryRoot')) { [string]$Selectors.DirectoryRoot } else { '' }
+    $n = ConvertTo-JsLiteral -Value $nodeSel
+    $r = ConvertTo-JsLiteral -Value $rowSel
+    $c = ConvertTo-JsLiteral -Value $cntSel
+    $p2 = ConvertTo-JsLiteral -Value $prefix
+    $rootSelJs = ConvertTo-JsLiteral -Value $rootSel
+
+    $js = @"
+(function(){
+  var nodeSel = '$n', rowSel = '$r', cntSel = '$c', prefix = '$p2', rootSpec = '$rootSelJs';
+  var out = [];
+
+  function titleOf(el){
+    if (!el) return '';
+    var h = el.querySelector('h1,h2,h3,h4,h5,h6,.chapterName,.sectionName');
+    var s = h ? (h.innerText || '') : (el.innerText || '');
+    return s.replace(/\s+/g, ' ').trim();
+  }
+  function lessonFromRow(row){
+    var node = row.querySelector(nodeSel);
+    if (!node) return null;
+    var id = String(node.id || '').replace(new RegExp('^' + prefix), '');
+    if (!id) return null;
+    var cnt = cntSel ? row.querySelector(cntSel) : null;
+    // 课节标题：去掉前导的序号数字
+    var raw = (node.innerText || '').replace(/\s+/g, ' ').trim();
+    return {
+      Id: id,
+      Title: raw,
+      UnfinishedCount: cnt ? parseInt(cnt.value, 10) : -1
+    };
+  }
+
+  // 章块：目录根节点的直接子元素，class 含 cells 但不是 ncells。
+  // 必须限定在目录根内 —— 在整个文档里找 ".cells" 会匹配到
+  // 包住全部章节的外层容器，结果 4 章被读成 1 章。
+  var dirRoot = null;
+  if (rootSpec) { try { dirRoot = document.querySelector(rootSpec); } catch(e) { dirRoot = null; } }
+  if (!dirRoot) { dirRoot = document.querySelector('#coursetree') || document.body; }
+
+  var chapters = [];
+  var kids = dirRoot.children;
+  for (var i = 0; i < kids.length; i++){
+    var cls = ' ' + String(kids[i].className) + ' ';
+    if (cls.indexOf(' cells ') >= 0 && cls.indexOf(' ncells ') < 0) { chapters.push(kids[i]); }
+  }
+  // 兜底：直接子元素里没有章块（层级不同），再在根内找一层
+  if (!chapters.length){
+    var inner = dirRoot.querySelectorAll('div[class]');
+    for (var q = 0; q < inner.length; q++){
+      var cls2 = ' ' + String(inner[q].className) + ' ';
+      if (cls2.indexOf(' cells ') >= 0 && cls2.indexOf(' ncells ') < 0) { chapters.push(inner[q]); }
+    }
+  }
+
+  if (!chapters.length){
+    // 没有分层：整份目录当成一章
+    var flat = rowSel ? document.querySelectorAll(rowSel) : [];
+    var ls = [];
+    for (var j = 0; j < flat.length; j++){
+      var o = lessonFromRow(flat[j]);
+      if (o) ls.push(o);
+    }
+    if (ls.length){ out.push({ Title: '(全部章节)', Lessons: ls }); }
+    return JSON.stringify(out);
+  }
+
+  for (var k = 0; k < chapters.length; k++){
+    var ch = chapters[k];
+    var ls2 = [];
+
+    // 章块自己带课节 id 的情况（该章只有一节，标题即课节）
+    if (ch.querySelector(nodeSel)){
+      var self = lessonFromRow(ch);
+      if (self) ls2.push(self);
+    }
+    var rows = rowSel ? ch.querySelectorAll(rowSel) : [];
+    for (var m = 0; m < rows.length; m++){
+      var o2 = lessonFromRow(rows[m]);
+      if (!o2) continue;
+      var dup = false;
+      for (var d = 0; d < ls2.length; d++){ if (ls2[d].Id === o2.Id) { dup = true; break; } }
+      if (!dup) ls2.push(o2);
+    }
+
+    // 章标题：去掉块内各课节文字后的剩余部分通常是章名
+    var chTitle = '';
+    var hd = ch.querySelector('h1,h2,h3,.chapterName');
+    if (hd) { chTitle = (hd.innerText || '').replace(/\s+/g, ' ').trim(); }
+    if (!chTitle) {
+      var first = ls2.length ? ls2[0].Title : '';
+      chTitle = first;
+    }
+    out.push({ Title: chTitle, Lessons: ls2 });
+  }
+  return JSON.stringify(out);
+})()
+"@
+
+    $r2 = Invoke-CdpJs -Session $Session -Expression $js -ContextId $DirContextId
+    if ($r2.Error -or -not $r2.Value) {
+        Write-CdpDiag ('Get-ChapterTree 读取失败: ' + $r2.Error)
+        return [pscustomobject]@{ ChapterCount = 0; Chapters = @() }
+    }
+    # 解析 JSON。
+    # 注意不要写成 @($r2.Value | ConvertFrom-Json) —— 那样会多包一层：
+    # 拿到的是"一个元素，里面是整个章节数组"，于是 4 章被当成 1 章。
+    # 这个坑本项目已经踩过三次（另两次在 Get-CdpTargets 与
+    # 输出目标数组的地方），一律用"先赋值再判断"的写法。
+    $parsed = $null
+    try { $parsed = $r2.Value | ConvertFrom-Json } catch {
+        Write-CdpDiag ('Get-ChapterTree 解析失败: ' + $_.Exception.Message)
+        return [pscustomobject]@{ ChapterCount = 0; Chapters = @() }
+    }
+    if ($null -eq $parsed) {
+        return [pscustomobject]@{ ChapterCount = 0; Chapters = @() }
+    }
+    # 只有一个章时 ConvertFrom-Json 给的是单个对象而不是数组，统一成数组
+    $raw = if ($parsed -is [array]) { $parsed } else { @($parsed) }
+
+    # 返回一个对象而不是数组。
+    # PowerShell 的 return 会把数组展开，调用方再用 @() 包一层就变成
+    # "一个装着数组的元素"，$tree.Count 得到 1 而不是章数 —— 这个坑
+    # 本项目踩过两次（另一次在 Get-CdpTargets）。装进属性里最省心。
+    $chapters = @()
+    $ci = 0
+    foreach ($ch in $raw) {
+        $ci++
+        $lessonList = @()
+        $li = 0
+        foreach ($l in @($ch.Lessons)) {
+            $li++
+            $lessonList += [pscustomobject]@{
+                Index           = $li
+                Id              = [string]$l.Id
+                Title           = [string]$l.Title
+                UnfinishedCount = [int]$l.UnfinishedCount
+                Unfinished      = ([int]$l.UnfinishedCount -gt 0)
+            }
+        }
+        $chapters += [pscustomobject]@{
+            Index       = $ci
+            Title       = [string]$ch.Title
+            LessonCount = $lessonList.Count
+            Lessons     = $lessonList
+        }
+    }
+
+    return [pscustomobject]@{
+        ChapterCount = $chapters.Count
+        Chapters     = $chapters
+    }
+}
+
+function Resolve-LessonRange {
+    <#
+    .SYNOPSIS
+        把使用者给的范围描述解析成课节 id 列表。
+    .DESCRIPTION
+        支持三种写法，都作用在课程目录的层级上：
+            章号         "2"        第 2 章全部
+            章.节        "2.1"      第 2 章第 1 节
+            课节序号     "7"        目录里第 7 节（当章号不存在时按序号理解）
+        起点默认第一章第一节，终点默认最后一节。
+
+        为什么按"章.节"而不是课节 id：使用者看的是目录，
+        记住的是"1.3 向量的内积"这种名字，不是 1260026233。
+
+        编号从目录标题里解析：标题形如 "1 1.3 向量的内积" 或 "3.1 仿射坐标变换"，
+        取其中形如 X.Y 的那一段。解析不出来时退回按序号。
+    .PARAMETER Chapters
+        Get-ChapterTree 的 Chapters。
+    .PARAMETER From
+        起点描述，空 = 第一节。
+    .PARAMETER To
+        终点描述，空 = 最后一节。
+    .OUTPUTS
+        PSCustomObject：@{ Ok; LessonIds; FromText; ToText; Message }
+        Ok=$false 时 Message 说明哪里没解析出来。
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$Chapters,
+        [string]$From = '',
+        [string]$To = ''
+    )
+
+    # 把目录摊平成一行一节的列表，并给每节算一个"章.节"编号
+    $flat = @()
+    $seq = 0
+    foreach ($ch in $Chapters) {
+        $chNo = [string]$ch.Index
+        $secInCh = 0
+        foreach ($l in $ch.Lessons) {
+            $secInCh++
+            $seq++
+            # 从标题里抠 "X.Y" 形式的编号
+            $label = ''
+            if ([string]$l.Title -match '(\d+\.\d+)') { $label = $Matches[1] }
+            if (-not $label) { $label = $chNo + '.' + $secInCh }
+            $flat += [pscustomobject]@{
+                Seq       = $seq
+                Chapter   = [int]$ch.Index
+                Section   = $secInCh
+                Label     = $label
+                Id        = [string]$l.Id
+                Title     = [string]$l.Title
+                ChapterName = [string]$ch.Title
+            }
+        }
+    }
+    if ($flat.Count -eq 0) {
+        return [pscustomobject]@{ Ok = $false; LessonIds = @(); FromText = ''; ToText = ''; Message = '目录是空的' }
+    }
+
+    # 把一个描述解析成摊平列表里的下标（找不到返回 -1）
+    function Find-Index {
+        param([string]$Text)
+        if ([string]::IsNullOrWhiteSpace($Text)) { return -1 }
+        $s = $Text.Trim()
+
+        # 1) "章.节"
+        if ($s -match '^(\d+)\.(\d+)$') {
+            $cn = [int]$Matches[1]; $sn = [int]$Matches[2]
+            for ($i = 0; $i -lt $flat.Count; $i++) {
+                if ($flat[$i].Chapter -eq $cn -and $flat[$i].Section -eq $sn) { return $i }
+            }
+            # 该章可能只有一节、且标题没带编号
+            for ($i = 0; $i -lt $flat.Count; $i++) {
+                if ($flat[$i].Label -eq $s) { return $i }
+            }
+            return -1
+        }
+
+        # 2) 纯章号：定位到该章第一节
+        if ($s -match '^(\d+)$') {
+            $num = [int]$Matches[1]
+            for ($i = 0; $i -lt $flat.Count; $i++) {
+                if ($flat[$i].Chapter -eq $num -and $flat[$i].Section -eq 1) { return $i }
+            }
+            # 该章不存在 -> 当序号用（1 起）
+            if ($num -ge 1 -and $num -le $flat.Count) { return ($num - 1) }
+            return -1
+        }
+
+        # 3) 直接给课节 id
+        for ($i = 0; $i -lt $flat.Count; $i++) {
+            if ($flat[$i].Id -eq $s) { return $i }
+        }
+        # 4) 标题片段匹配（唯一命中才算）
+        $hit = -1; $n = 0
+        for ($i = 0; $i -lt $flat.Count; $i++) {
+            if ($flat[$i].Title -like ('*' + $s + '*')) { $hit = $i; $n++ }
+        }
+        if ($n -eq 1) { return $hit }
+        return -1
+    }
+
+    $iFrom = Find-Index -Text $From
+    $iTo = Find-Index -Text $To
+
+    if (-not [string]::IsNullOrWhiteSpace($From) -and $iFrom -lt 0) {
+        return [pscustomobject]@{ Ok = $false; LessonIds = @(); FromText = $From; ToText = $To
+            Message = ('起点 "' + $From + '" 在目录里找不到。可以写章号(2)、章.节(2.1)、或目录序号。') }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($To) -and $iTo -lt 0) {
+        return [pscustomobject]@{ Ok = $false; LessonIds = @(); FromText = $From; ToText = $To
+            Message = ('终点 "' + $To + '" 在目录里找不到。') }
+    }
+
+    if ($iFrom -lt 0) { $iFrom = 0 }
+    if ($iTo -lt 0) { $iTo = $flat.Count - 1 }
+    if ($iTo -lt $iFrom) {
+        return [pscustomobject]@{ Ok = $false; LessonIds = @(); FromText = $From; ToText = $To
+            Message = '终点排在起点前面了。' }
+    }
+
+    $ids = @()
+    for ($i = $iFrom; $i -le $iTo; $i++) { $ids += $flat[$i].Id }
+
+    return [pscustomobject]@{
+        Ok        = $true
+        LessonIds = $ids
+        FromText  = ($flat[$iFrom].Label + ' ' + $flat[$iFrom].Title)
+        ToText    = ($flat[$iTo].Label + ' ' + $flat[$iTo].Title)
+        Message   = ''
+    }
+}
+
 function Get-LessonList {
     <#
     .SYNOPSIS
@@ -519,6 +846,8 @@ function Get-ClazzId {
 
 Export-ModuleMember -Function `
     Get-SelectorsJs, Get-SelectorValue, `
-    Get-LessonList, Get-LessonById, Get-CurrentLessonId, Get-UrlLessonId, `
+    Get-ChapterTree, Resolve-LessonRange, `
+    Get-LessonList, Get-LessonById, `
+    Get-CurrentLessonId, Get-UrlLessonId, `
     Test-CoursePage, Test-LoggedIn, Test-OnLoginPage, Switch-Lesson, Wait-LessonCurrent, `
     Get-CourseId, Get-ClazzId
