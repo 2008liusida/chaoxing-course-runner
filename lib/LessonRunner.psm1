@@ -96,8 +96,6 @@ function Invoke-Lesson {
     $replayLeft = [int]$Settings.MaxReplayPerLesson
     $deadline = (Get-Date).AddMinutes([double]$Settings.MaxWaitMinutesPerLesson)
     $noVideoPolls = 0
-    # 本节出现过多少次"完成标记与播放进度不符"。只提醒一次，避免刷屏。
-    $fakeJobMark = 0
     # 连续多少轮发现"页面停在别的课节"。
     # 切换课节时 #curChapterId 会短暂保留旧值，所以要容许几轮，
     # 不能一读到不一致就判本节失败。必须在循环外初始化：
@@ -212,48 +210,35 @@ function Invoke-Lesson {
         }
 
         # ---- 平台是否已登记完成 ----
-        # 这里必须和播放位置交叉验证，不能只看那一个 DOM 标记。
-        # 踩过的坑：.ans-job-finished 在某些版本里不可靠 —— 课节刚点开、
-        # 视频一秒没播，DOM 里就已经有这个元素了。早先只看它，
-        # 于是 12 分钟的视频在第 19 秒就被判成"任务点已完成"，
-        # 日志记了一堆"完成"，实际一节都没听完。
+        # 唯一的判据是任务点图标上的 aria-label —— 平台自己写的状态：
+        #     "任务点已完成" / "任务点未完成"
         #
-        # 现在的规矩：
-        #   · 视频已播够规定比例（默认 90%，页面写明"观看时长需 ≥ 总时长的 90%"）
-        #     -> 标记可信，算完成
-        #   · 视频几乎没播（不到 15%）-> 标记不可信，忽略它，继续老老实实播
-        #   · 两者之间 -> 记一笔诊断，按"未完成"处理，把剩下的播完再说
-        # 宁可多播一遍，也不能谎报完成 —— 谎报的代价是使用者以为刷完了。
+        # 走过的弯路（都别再犯）：
+        #   1) 只看 .ans-job-finished 这个 class。它在某些版本里不可靠，
+        #      课节刚点开就存在，于是把没播的课节谎报成完成。
+        #   2) 改成"class 标记 + 视频播放位置"交叉验证。这个更糟：
+        #      已完成的课节重新打开时视频位置会归零，于是把平台明确标注
+        #      "任务点已完成"的课节判成"标记不可信"，反复重播，
+        #      还会打出误导使用者的警告。
+        # aria-label 才是平台对"这个任务点算不算数"的最终表态。
         $cardsCtx = Get-CardsContext -Session $Session -Selectors $Selectors
-        $jobDone = ($cardsCtx -gt 0) -and
-            (Test-JobFinished -Session $Session -Selectors $Selectors -ContextId $cardsCtx)
-        if ($jobDone) {
-            $watched = 0.0
-            if ($state.Duration -gt 0) { $watched = $state.Current / $state.Duration }
-            # 实测有课节写"观看时长需 ≥ 总时长的 100%"，所以按 100% 播最保险：
-            # 播满一定满足 90% 的要求，反之不成立。
-            $needRatio = 1.00
+        $jobStates = @()
+        if ($cardsCtx -gt 0) {
+            $jobStates = @(Get-JobStates -Session $Session -Selectors $Selectors -ContextId $cardsCtx)
+        }
+        $jobTotal = $jobStates.Count
+        $jobUnfinished = @($jobStates | Where-Object { -not $_.Finished })
 
-            if ($state.Duration -le 0) {
-                # 时长都没读到，无从判断 —— 不当成完成
-                Write-CdpDiag ('课节 ' + $Lesson.Id + ' 出现完成标记，但读不到时长，按未完成处理')
-            } elseif ($watched -ge $needRatio) {
-                Clear-ProgressLine
-                Say ('任务点已完成（已观看 ' + [int]($watched * 100) + '%）') 'OK'
-                return $true
-            } elseif ($watched -lt 0.15) {
-                # 刚点开就带着完成标记 —— 这个标记不可信
-                if ($fakeJobMark -eq 0) {
-                    Say ('注意：本节显示"已完成"标记，但视频只播了 ' + [int]($watched * 100) +
-                         '%，与标记不符，按未完成处理，继续播放') 'WARN'
-                    Write-CdpDiag ('课节 ' + $Lesson.Id + ' 完成标记可疑: watched=' +
-                        [math]::Round($watched, 3) + ' current=' + [math]::Round($state.Current, 1) +
-                        ' duration=' + [math]::Round($state.Duration, 1))
-                }
-                $fakeJobMark++
-            } else {
-                Write-CdpDiag ('课节 ' + $Lesson.Id + ' 完成标记与进度不一致: 已播 ' +
-                    [int]($watched * 100) + '%，继续播完')
+        if ($jobTotal -gt 0 -and $jobUnfinished.Count -eq 0) {
+            Clear-ProgressLine
+            Say ('本节 ' + $jobTotal + ' 个任务点平台均已标记完成') 'OK'
+            return $true
+        }
+        if ($jobTotal -gt 0) {
+            Write-CdpDiag ('课节 ' + $Lesson.Id + ' 任务点 ' + $jobTotal +
+                ' 个，未完成 ' + $jobUnfinished.Count + ' 个')
+            if (-not $playbackStarted) {
+                Say ('本节共 ' + $jobTotal + ' 个任务点，还有 ' + $jobUnfinished.Count + ' 个未完成') 'INFO'
             }
         }
 

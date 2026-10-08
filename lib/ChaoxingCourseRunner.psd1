@@ -65,6 +65,7 @@
         'Find-VideoFrameContext'
         'Get-VideoFrameContexts'
         'Get-AllVideoContexts'
+        'Get-JobStates'
         'Read-RunnerConfigFile'
         'Get-RunnerSettings'
 

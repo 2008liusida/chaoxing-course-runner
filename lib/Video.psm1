@@ -240,6 +240,60 @@ function Get-JobIconClass {
     return [string]$r.Value
 }
 
+function Get-JobStates {
+    <#
+    .SYNOPSIS
+        读出本节所有任务点的完成状态。
+    .DESCRIPTION
+        依据是每个任务点图标的 aria-label —— 平台自己写的状态：
+            "任务点已完成" / "任务点未完成"
+        这是最可靠的信号，比"看视频播到百分之几"强得多：
+        视频位置会因重新加载而清零，对已完成的课节会误判成未完成；
+        而 aria-label 是平台对"这个任务点算不算数"的最终表态。
+
+        另外也能数出任务点总数，用于判断一节课有几个视频/其他任务点。
+    .OUTPUTS
+        PSCustomObject[]：@{ Index; Finished; Label; HasVideo }
+        读不到时返回空数组。
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$Session,
+        [Parameter(Mandatory)][hashtable]$Selectors,
+        [Parameter(Mandatory)][int]$ContextId
+    )
+
+    $sel = ConvertTo-JsLiteral -Value ([string]$Selectors.JobIcon)
+    $js = @"
+(function(){
+  var ic = document.querySelectorAll('$($sel.Trim('"' ))');
+  var out = [];
+  for (var i = 0; i < ic.length; i++){
+    var e = ic[i];
+    var lb = e.getAttribute('aria-label') || '';
+    var p = e.parentElement;
+    out.push({
+      Index: i,
+      Label: lb,
+      Finished: lb.indexOf('已完成') >= 0 && lb.indexOf('未完成') < 0,
+      HasVideo: String(e.className).indexOf('ans-job-video') >= 0
+    });
+  }
+  return JSON.stringify(out);
+})()
+"@
+
+    $r = Invoke-CdpJs -Session $Session -Expression $js -ContextId $ContextId
+    if ($r.Error -or -not $r.Value) { return @() }
+    try {
+        $arr = @($r.Value | ConvertFrom-Json)
+        return $arr
+    } catch {
+        Write-CdpDiag ('Get-JobStates 解析失败: ' + $_.Exception.Message)
+        return @()
+    }
+}
+
 function Test-JobFinished {
     <#
     .SYNOPSIS
