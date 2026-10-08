@@ -36,6 +36,19 @@ namespace ChaoxingRunner
         // 内嵌资源表：每项为 "相对路径|base64内容"，由 build.py 生成
         /*__EMBEDDED__*/
 
+        // 标题字符画 —— 与终端版同一份。
+        // 实测所有等宽字体（Consolas / Cascadia / MS Gothic / Lucida Console）
+        // 里块状字符都是半角，所以这份画在窗口里能对齐；
+        // 之前"看不清"是因为字号太小，不是字形问题。
+        // 改这里的话，Run.ps1 里那份也要同步改。
+        const string LOGO_ART =
+            " ██████╗██╗  ██╗ █████╗  ██████╗ ██╗  ██╗██╗███╗   ██╗ ██████╗ \n" +
+            "██╔════╝██║  ██║██╔══██╗██╔═══██╗╚██╗██╔╝██║████╗  ██║██╔════╝ \n" +
+            "██║     ███████║███████║██║   ██║ ╚███╔╝ ██║██╔██╗ ██║██║  ███╗\n" +
+            "██║     ██╔══██║██╔══██║██║   ██║ ██╔██╗ ██║██║╚██╗██║██║   ██║\n" +
+            "╚██████╗██║  ██║██║  ██║╚██████╔╝██╔╝ ██╗██║██║ ╚████║╚██████╔╝\n" +
+            " ╚═════╝╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═╝╚═╝╚═╝  ╚═══╝ ╚═════╝ \n";
+
         const string APP_TITLE = "超星学习通 · 自动连播工具";
         const string APP_AUTHOR = "liusida <1102271746@qq.com>";
 
@@ -79,39 +92,29 @@ namespace ChaoxingRunner
             Font = new Font("Microsoft YaHei UI", 9F);
             BackColor = Color.FromArgb(250, 250, 250);
 
-            // ---- 顶部标题 ----
-            // 用大号中文，不用终端版的块状字符画：
-            // 块状字符在窗口里渲染不可靠（等宽字体缺字形会显示成色块），
-            // 而且终端版横幅 6 行 63 列，放顶部至少要 265px 高，占掉大半界面。
-            // 这里的目标是"看得清"，不是照搬字符画。
+            // ---- 顶部标题：字符画 ----
+            // 用 Consolas 渲染。字符画 6 行 63 列，7pt 时约 265x60 像素，
+            // 占满顶部；再大就装不下了。
             Panel header = new Panel();
             header.Dock = DockStyle.Top;
-            header.Height = 104;
+            header.Height = 116;
             header.BackColor = Color.FromArgb(38, 38, 44);
             Controls.Add(header);
 
             Label logo = new Label();
-            logo.Text = "超星学习通 · 自动连播工具";
-            logo.ForeColor = Color.FromArgb(130, 225, 165);
-            logo.Font = new Font("Microsoft YaHei UI", 20F, FontStyle.Bold);
+            logo.Text = LOGO_ART;
+            logo.ForeColor = Color.FromArgb(120, 225, 170);
+            logo.Font = new Font("Consolas", 8F, FontStyle.Regular);
             logo.AutoSize = true;
-            logo.Location = new Point(16, 12);
+            logo.Location = new Point(14, 4);
             header.Controls.Add(logo);
-
-            Label tagline = new Label();
-            tagline.Text = "自动扫描未完成课节 · 逐个播放 · 播完自动进入下一节";
-            tagline.ForeColor = Color.FromArgb(175, 175, 188);
-            tagline.Font = new Font("Microsoft YaHei UI", 9F);
-            tagline.AutoSize = true;
-            tagline.Location = new Point(20, 52);
-            header.Controls.Add(tagline);
 
             Label author = new Label();
             author.Text = "by " + APP_AUTHOR + "    github.com/2008liusida/chaoxing-course-runner";
             author.ForeColor = Color.FromArgb(140, 140, 152);
-            author.Font = new Font("Microsoft YaHei UI", 8.5F);
+            author.Font = new Font("Microsoft YaHei UI", 8F);
             author.AutoSize = true;
-            author.Location = new Point(20, 74);
+            author.Location = new Point(16, 94);
             header.Controls.Add(author);
 
             // ---- 按钮区 ----
@@ -522,6 +525,13 @@ namespace ChaoxingRunner
 
         Color ClassifyColor(string s)
         {
+            // 优先按脚本传来的级别着色 —— 这是准确信息，不用猜。
+            // 关键词匹配只作兜底（用于没有级别前缀的行）。
+            if (s.StartsWith("[ERROR]")) return Color.FromArgb(255, 130, 130);
+            if (s.StartsWith("[WARN]")) return Color.FromArgb(255, 210, 120);
+            if (s.StartsWith("[OK]")) return Color.FromArgb(140, 235, 150);
+            if (s.StartsWith("[DEBUG]")) return Color.FromArgb(120, 120, 130);
+
             if (s.IndexOf("[错误]") >= 0 || s.IndexOf("错误") >= 0 || s.IndexOf("失败") >= 0)
                 return Color.FromArgb(255, 130, 130);
             // 免责声明与警告同色（黄）。

@@ -137,7 +137,11 @@ function Start-DebugBrowser {
         $extra += '--disable-gpu-compositing'
     }
     if ($env:CCR_GUI -eq '1') {
+        # --test-type 用来压掉那句
+        # "你使用的是不受支持的命令行标志: --no-sandbox" 警告条。
+        # 没有它，浏览器顶部会一直挂着一条黄条，虽然不影响功能但很碍眼。
         $extra += '--no-sandbox'
+        $extra += '--test-type'
     }
 
     if ($extra.Count -gt 0) {

@@ -156,6 +156,13 @@ function Write-Log {
     <#
     .SYNOPSIS
         统一日志出口（同时写控制台与日志文件）。
+    .NOTES
+        图形界面模式下会在正文前加一个 [级别] 前缀。
+        原因：界面是纯文本框，拿不到 PowerShell 的日志级别，
+        只能靠关键词猜颜色 —— 于是"这一段到底算警告还是普通信息"
+        取决于文案里有没有恰好出现某个词，非常脆（免责声明就这么漏了一行）。
+        带上级别后，界面可以直接按级别着色，不必猜。
+        控制台模式不加前缀：终端本来就用颜色区分，加了反而碍眼。
     #>
     param(
         [Parameter(Mandatory, Position = 0)][AllowEmptyString()][string]$Message,
@@ -165,7 +172,8 @@ function Write-Log {
     if ($FileOnly) {
         Write-RunnerLog -Message $Message -Path $cfg.LogFile -Level $Level -FileOnly
     } else {
-        Write-RunnerLog -Message $Message -Path $cfg.LogFile -Level $Level
+        $shown = if ($env:CCR_GUI -eq '1') { '[' + $Level + '] ' + $Message } else { $Message }
+        Write-RunnerLog -Message $shown -Path $cfg.LogFile -Level $Level
     }
 }
 
@@ -468,7 +476,7 @@ Write-Log '本工具仅供学习交流与个人学习进度规划使用，严禁
 Write-Log '批量账号操作等违规作弊行为。请遵守所在平台与学校的相关规定。' 'WARN'
 Write-Log '使用者应自行判断使用场景是否合规，违规使用所产生的一切后果由使用者自行承担。' 'WARN'
 Write-Log '本软件按原样提供，作者不对使用结果、账号状态或平台处罚承担任何责任。' 'WARN'
-Write-Log '本工具按 1 倍速真实播放，不代答测验与作业，不模拟点击、不做任何反检测处理。'
+Write-Log '本工具按 1 倍速真实播放，不代答测验与作业，不模拟点击、不做任何反检测处理。' 'WARN'
 Write-Log "浏览器配置目录: $($cfg.ProfileDir)"
 
 # ---- 0. 显示缓存占用（只报告，不清理） ----
