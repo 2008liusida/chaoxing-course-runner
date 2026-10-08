@@ -79,9 +79,11 @@ namespace ChaoxingRunner
             Font = new Font("Microsoft YaHei UI", 9F);
             BackColor = Color.FromArgb(250, 250, 250);
 
-            // ---- 顶部标题：与终端版同一份字符画 ----
-            // 用 Consolas 等宽字体渲染块状字符，字形与终端一致。
-            // 之前这里只有一行中文，在窗口里显得又小又单薄。
+            // ---- 顶部标题 ----
+            // 用大号中文，不用终端版的块状字符画：
+            // 块状字符在窗口里渲染不可靠（等宽字体缺字形会显示成色块），
+            // 而且终端版横幅 6 行 63 列，放顶部至少要 265px 高，占掉大半界面。
+            // 这里的目标是"看得清"，不是照搬字符画。
             Panel header = new Panel();
             header.Dock = DockStyle.Top;
             header.Height = 104;
@@ -522,6 +524,15 @@ namespace ChaoxingRunner
         {
             if (s.IndexOf("[错误]") >= 0 || s.IndexOf("错误") >= 0 || s.IndexOf("失败") >= 0)
                 return Color.FromArgb(255, 130, 130);
+            // 免责声明与警告同色（黄）。
+            // 它本身不含"警告"字样，所以要单独识别，否则会掉进默认灰色。
+            if (s.IndexOf("【免责声明】") >= 0 ||
+                s.IndexOf("仅供学习交流") >= 0 ||
+                s.IndexOf("严禁用于恶意刷课") >= 0 ||
+                s.IndexOf("使用者应自行判断") >= 0 ||
+                s.IndexOf("按原样提供") >= 0 ||
+                s.IndexOf("不代答测验与作业") >= 0)
+                return Color.FromArgb(255, 210, 120);
             if (s.IndexOf("警告") >= 0 || s.IndexOf("跳过") >= 0 || s.IndexOf("不可见") >= 0)
                 return Color.FromArgb(255, 210, 120);
             if (s.IndexOf("完成") >= 0 || s.IndexOf("已登记") >= 0 || s.IndexOf("登上了") >= 0)
