@@ -36,7 +36,7 @@ Import-Module (Join-Path $PSScriptRoot 'CdpClient.psm1') -Force -DisableNameChec
 #
 # 所以用运行时 Add-Type，并注意两点：
 #   1) 外面套 try/catch —— 编译失败时功能降级，而不是报错刷屏
-#   2) 编译需要可写的临时目录；图形界面版本会把 TMP/TEMP 指到可写位置
+#   2) 编译需要一个可写的临时目录
 if (-not ('CcrVis.Win' -as [type])) {
     try {
         Add-Type -Namespace CcrVis -Name Win -MemberDefinition @'

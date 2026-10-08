@@ -116,17 +116,3 @@ Get-ChildItem -Recurse -Include *.ps1,*.psm1,*.psd1 | ForEach-Object {
 提交代码即表示你同意以同一许可证分发你的贡献。
 若要改为允许商用（如 MIT），需维护者统一替换 `LICENSE` 并更新 `README.md`。
 
-## 构建图形界面版本
-
-仓库 `dist\` 下的 `ChaoxingRunner.exe` 不进版本库，由构建脚本生成：
-
-```powershell
-python gui\build.py
-```
-
-只用到 Windows 自带的 `csc.exe`，不需要 .NET SDK。
-产物在 `dist\ChaoxingRunner.exe`。
-
-改完脚本后要重新构建，否则 exe 里还是旧的内嵌脚本 ——
-这是最容易忘的一步。
-（`ChaoxingRunner.exe --selftest` 可以确认内嵌资源是否完好。）

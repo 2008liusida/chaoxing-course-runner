@@ -34,7 +34,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-# 无控制台时设置编码会抛"句柄无效"（图形界面版本就是这种情况），
+# 无控制台时设置编码会抛"句柄无效"（重定向输出时会出现），
 # 所以只在真有控制台时才设。控制台里的中文显示依赖这一步。
 try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch { }
 
@@ -43,16 +43,13 @@ $profileDir = Join-Path $toolRoot 'browser-profile'
 
 
 # 控制台输出出口。
-# 图形界面版本没有控制台，Write-Host 会失败或产生乱码，所以统一走这里：
-#   · 控制台：带颜色直接打印
-#   · 图形界面：走输出流，由界面捕获
+# 统一走这里，便于集中控制输出方式。
 function Write-Screen {
     param(
         [Parameter(Position = 0)][AllowEmptyString()][string]$Text,
         [string]$Tone = 'Gray',
         [switch]$NoNewline
     )
-    if ($env:CCR_GUI -eq '1') { Write-Output $Text; return }
     if ($NoNewline) { Write-Host $Text -ForegroundColor $Tone -NoNewline }
     else { Write-Host $Text -ForegroundColor $Tone }
 }

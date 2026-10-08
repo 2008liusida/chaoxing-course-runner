@@ -4,10 +4,6 @@
 
 ```
 chaoxing-runner/
-├─ dist/                        编译产物（不进版本库）：ChaoxingRunner.exe
-├─ gui/                         图形界面版本源码
-│    Gui.cs.tpl                 C# 界面源码模板（内嵌脚本的占位符）
-│    build.py                   用 Windows 自带 csc.exe 编译，不需要 .NET SDK
 ├─ Start.bat                     主入口（双击即用）
 ├─ Run.ps1                       主流程编排
 ├─ Diagnose.bat                  环境自检（跑不起来时先双击这个）
@@ -192,82 +188,3 @@ Run.ps1                 流程决策：选哪些课节、播到什么时候停�
        ├─ 登记成功 → 完成
        └─ 未登记 → 从头重播（MaxReplayPerLesson 次）
             └─ 仍未登记 → 跳过并记录
-```
-
-设计取舍：**所有失败路径都是"记录日志并返回"**，不抛异常中断整批任务。
-一节课出问题（没有视频、平台改版、网络抖动）不应该让剩余课节全停下。
-
-外层（`Run.ps1`）额外加一道保护：
-**连续 3 节失败即停止**。连续失败通常意味着环境出了问题
-（断网 / 登录过期 / 浏览器被关），继续跑只会白白等待 ——
-因此这里果断停止，把问题交回使用者。
-
-## 退出码
-
-| 码 | 含义 |
-|---|---|
-| 0 | 正常结束（含"全部已通过"与 DryRun） |
-| 2 | 环境问题：端口连不上、找不到浏览器、未登录、没有课程页 |
-| 3 | 读不到课程目录（页面未加载 / 平台改版导致选择器失效） |
-| 4 | 参数或配置非法（如 SwitchMode 写错） |
-
-## 兼容性
-
-必须同时支持 **Windows PowerShell 5.1**（系统自带）与 **PowerShell 7.x**。
-5.1 上与 7.x 行为不同的地方（改代码时注意）：
-
-| 坑 | 表现 | 对策 |
-|---|---|---|
-| 无 BOM 的 UTF-8 脚本被按 ANSI 读 | 中文乱码 → 语法错误 | 所有 `.ps1/.psm1/.psd1` 必须带 UTF-8 BOM |
-| `Import-PowerShellDataFile` 读不了带 BOM 的 psd1 | 配置加载失败 | 自己写极简解析器（`Settings.psm1`） |
-| `@($json \| ConvertFrom-Json)` 对 JSON 数组只得到 1 个元素 | 目录读到 0/1 节 | 用 `ConvertFrom-JsonArray`（内部用 `-InputObject`） |
-| `List[object].Add()` 绑定 `Object[]` 时报 ArgumentException | 解析数组崩 | 用数组拼接，不用泛型 List |
-| `Join-String` / `HttpClientHandler` 等 PS7/.NET Core 专有 | 直接报错退出 | 换兼容写法 |
-| 对象字面量里写成 `S.Name='x'` | 浏览器 `SyntaxError: Unexpected token '.'` | 必须用 `Name:'x'`（冒号） |
-
-## 测试
-
-| 脚本 | 覆盖 | 是否需要浏览器 |
-|---|---|---|
-| `tests/diagnose-env.ps1` | 环境自检：文件完整性、执行策略、浏览器、端口、编码 | 否 |
-| `tests/module-smoke.ps1` | 模块导出完整性、Win32 声明与 DLL 归属、选择器解析、配置校验 | 否 |
-| `tests/check-jsonarray.ps1` | JSON 数组解析在 5.1/7.x 的行为 | 否 |
-| `tests/check-fixture.ps1` | 选择器与夹具结构是否对齐、切课 | 是（调试端口） |
-| `tests/run-fixture.ps1` | 端到端：识别 → 播放 → 登记 → 下一节 | 是（调试端口） |
-
-夹具（`tests/fixture/`）刻意复刻真实的 URL 路径与层级
-（`knowledge/cards.html` → `ananas/modules/video/index.html`），
-否则帧匹配规则无法被验证。
-
-## 图形界面版本的分层
-
-图形界面不是另写一套逻辑，而是在原脚本外面套了一层窗口：
-
-```
-ChaoxingRunner.exe（C# / .NET Framework 4.0）
-  │  内嵌全部 .ps1 / .psm1 / .psd1（base64）
-  │  运行时释放到临时目录
-  ↓
-Windows 自带的 PowerShell 引擎（System.Management.Automation）
-  ↓
-Run.ps1 —— 与 Start.bat 走的是同一条路径
-```
-
-选这个做法而不是用 C# 重写的原因：
-
-- **不重复实现**。播放状态机、切课、平台适配这些逻辑已经在 PowerShell 里
-  稳定运行并有测试覆盖，重写一遍等于把踩过的坑再踩一次。
-- **零运行时依赖**。.NET Framework 4.0 在所有 Windows 10/11 上都有，
-  PowerShell 也是系统自带，所以 exe 是真正"双击即用"。
-- **不用 .NET SDK 构建**。用系统自带的 `csc.exe` 就够，
-  贡献者不需要装几百 MB 的开发环境。
-
-界面与脚本之间靠两条约定通信：
-
-| 机制 | 用途 |
-|---|---|
-| 环境变量 `CCR_GUI=1` | 告诉脚本"没有控制台"：进度行不补位、不回车；控制台输出改走管道 |
-| `-NoClearScreen` / `-NoArrangeWindows` | 界面没有控制台，也不需要脚本去摆窗口 |
-
-这两条是为了让同一份脚本既能服务控制台、又能服务窗口，
-而不必维护两份分支。

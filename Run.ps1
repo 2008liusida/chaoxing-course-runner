@@ -91,8 +91,6 @@ param(
     [switch]$DryRun,
     [switch]$NoLaunch,
     [switch]$StopBrowserWhenDone,
-    [switch]$NoClearScreen,
-    [switch]$NoArrangeWindows,
     # 只处理目录里的一段。两种写法都可以：
     #   章号    -From 2        （第 2 章开头）
     #   章.节   -From 1.3      （1.3 这一节）
@@ -105,7 +103,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 # 让中文在 Windows PowerShell 5.1 的控制台里也能正常显示
-# 无控制台时设置编码会抛"句柄无效"（图形界面版本就是这种情况），
+# 无控制台时设置编码会抛"句柄无效"（输出被重定向时会出现），
 # 所以只在真有控制台时才设。控制台里的中文显示依赖这一步。
 try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch { }
 
@@ -146,18 +144,13 @@ $selectors = Import-CourseSelectors
 
 Set-CdpLogPath -Path $cfg.LogFile
 
-# 控制台输出出口。
-# 图形界面版本没有控制台，Write-Host 会失败或产生乱码
-# （颜色与光标控制无处落脚），所以统一走这里：
-#   · 控制台：带颜色直接打印
-#   · 图形界面：走输出流，由界面捕获并按级别着色
+# 控制台输出出口。统一走这里，方便以后换输出方式。
 function Write-Screen {
     param(
         [Parameter(Position = 0)][AllowEmptyString()][string]$Text,
         [string]$Tone = 'Gray',
         [switch]$NoNewline
     )
-    if ($env:CCR_GUI -eq '1') { Write-Output $Text; return }
     if ($NoNewline) { Write-Host $Text -ForegroundColor $Tone -NoNewline }
     else { Write-Host $Text -ForegroundColor $Tone }
 }
@@ -166,13 +159,6 @@ function Write-Log {
     <#
     .SYNOPSIS
         统一日志出口（同时写控制台与日志文件）。
-    .NOTES
-        图形界面模式下会在正文前加一个 [级别] 前缀。
-        原因：界面是纯文本框，拿不到 PowerShell 的日志级别，
-        只能靠关键词猜颜色 —— 于是"这一段到底算警告还是普通信息"
-        取决于文案里有没有恰好出现某个词，非常脆（免责声明就这么漏了一行）。
-        带上级别后，界面可以直接按级别着色，不必猜。
-        控制台模式不加前缀：终端本来就用颜色区分，加了反而碍眼。
     #>
     param(
         [Parameter(Mandatory, Position = 0)][AllowEmptyString()][string]$Message,
@@ -182,8 +168,7 @@ function Write-Log {
     if ($FileOnly) {
         Write-RunnerLog -Message $Message -Path $cfg.LogFile -Level $Level -FileOnly
     } else {
-        $shown = if ($env:CCR_GUI -eq '1') { '[' + $Level + '] ' + $Message } else { $Message }
-        Write-RunnerLog -Message $shown -Path $cfg.LogFile -Level $Level
+        Write-RunnerLog -Message $Message -Path $cfg.LogFile -Level $Level
     }
 }
 
@@ -443,11 +428,11 @@ function Build-LessonQueue {
 # ---------------------------------------------------------------- 主流程
 
 Write-Log '=== 超星学习通 · 自动连播工具 启动 ===' 'INFO' -FileOnly
-if (-not $NoClearScreen) { try { Clear-Host } catch { } }
+try { Clear-Host } catch { }
 # ---------------- 布局第一步：先把终端摆到右半屏 ----------------
 # 此时浏览器还没启动，只能摆终端。
 # 先摆的好处是：接下来打印的启动信息立刻落在正确位置，不会先左后右地跳。
-if ($cfg.ArrangeWindows -and -not $NoArrangeWindows) {
+if ($cfg.ArrangeWindows) {
     try {
         if (-not (Set-TerminalWindowPlacement -Side 'right')) {
             Write-Log '终端窗口没摆成（找不到窗口句柄），你可以手动拖一下' 'WARN'
@@ -457,26 +442,16 @@ if ($cfg.ArrangeWindows -and -not $NoArrangeWindows) {
     }
 }
 
-# 横幅：控制台里用块状字符画，图形界面里用一行普通文字。
-# 原因：那些块状字符在 RichTextBox 里字形不全，渲染出来是一堆碎块，
-# 根本认不出是什么；而界面顶部本来就有大标题，不需要再来一份。
-$bannerLines = if ($env:CCR_GUI -eq '1') {
-    @(
-        '超星学习通 · 自动连播工具    by liusida <1102271746@qq.com>'
-        'github.com/2008liusida/chaoxing-course-runner'
-    )
-} else {
-    @(
-        ' ██████╗██╗  ██╗ █████╗  ██████╗ ██╗  ██╗██╗███╗   ██╗ ██████╗ '
-        '██╔════╝██║  ██║██╔══██╗██╔═══██╗╚██╗██╔╝██║████╗  ██║██╔════╝ '
-        '██║     ███████║███████║██║   ██║ ╚███╔╝ ██║██╔██╗ ██║██║  ███╗'
-        '██║     ██╔══██║██╔══██║██║   ██║ ██╔██╗ ██║██║╚██╗██║██║   ██║'
-        '╚██████╗██║  ██║██║  ██║╚██████╔╝██╔╝ ██╗██║██║ ╚████║╚██████╔╝'
-        ' ╚═════╝╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═╝╚═╝╚═╝  ╚═══╝ ╚═════╝ '
-        '超星学习通 · 自动连播工具'
-        'by liusida <1102271746@qq.com>   github.com/2008liusida/chaoxing-course-runner'
-    )
-}
+$bannerLines = @(
+    ' ██████╗██╗  ██╗ █████╗  ██████╗ ██╗  ██╗██╗███╗   ██╗ ██████╗ '
+    '██╔════╝██║  ██║██╔══██╗██╔═══██╗╚██╗██╔╝██║████╗  ██║██╔════╝ '
+    '██║     ███████║███████║██║   ██║ ╚███╔╝ ██║██╔██╗ ██║██║  ███╗'
+    '██║     ██╔══██║██╔══██║██║   ██║ ██╔██╗ ██║██║╚██╗██║██║   ██║'
+    '╚██████╗██║  ██║██║  ██║╚██████╔╝██╔╝ ██╗██║██║ ╚████║╚██████╔╝'
+    ' ╚═════╝╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═╝╚═╝╚═╝  ╚═══╝ ╚═════╝ '
+    '超星学习通 · 自动连播工具'
+    'by liusida <1102271746@qq.com>   github.com/2008liusida/chaoxing-course-runner'
+)
 Write-Log '=========================================================='
 foreach ($bl in $bannerLines) { Write-Log $bl 'OK' }
 Write-Log '=========================================================='
@@ -533,7 +508,7 @@ Write-Log "已连接: $($version.Browser)"
 # 浏览器必须等启动完才有窗口句柄，所以放在这里。
 # 用带校验的版本：浏览器启动后会异步恢复上次的窗口状态（常见是最大化），
 # 可能把刚摆好的位置覆盖掉，所以摆完要回读核对、不符就重设。
-if ($cfg.ArrangeWindows -and -not $NoArrangeWindows) {
+if ($cfg.ArrangeWindows) {
     try {
         $layoutBrowser = Get-BrowserWindowHandle
         $lay = Arrange-WindowsVerified -BrowserHandle $layoutBrowser -BrowserSide 'left'

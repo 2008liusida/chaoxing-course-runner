@@ -28,24 +28,13 @@ $script:LevelLabel = @{
 # 而 Write-RunnerLog 每次都要读它来判断"是否有进度行正在显示"。
 $script:ProgressLineActive = $false
 
-# 统一的控制台输出出口。
-#
-# 为什么需要它：图形界面版本把本工具跑在没有控制台的 runspace 里，
-# 那里 Write-Host 会失败或产生乱码（颜色、光标控制都无处落脚）。
-# 所以由这一个函数决定怎么输出：
-#   · 控制台：带颜色直接打印
-#   · 图形界面：走输出流，由界面捕获并按级别着色
+# 统一的控制台输出出口。集中在一处，便于以后换输出方式。
 function Write-ConsoleLine {
     param(
         [Parameter(Position = 0)][AllowEmptyString()][string]$Text,
         [string]$Level = 'Gray',
         [switch]$NoNewline
     )
-    if ($env:CCR_GUI -eq '1') {
-        # 交给管道的输出流；界面按内容判断级别并着色
-        Write-Output $Text
-        return
-    }
     if ($NoNewline) {
         Write-Host $Text -ForegroundColor $Level -NoNewline
     } else {
@@ -144,13 +133,6 @@ function Write-ProgressLine {
         [Parameter(Mandatory, Position = 0)][string]$Text,
         [string]$Color = 'DarkCyan'
     )
-    # 图形界面模式：把进度原文直接交出去，不补位、不回车。
-    # 补位与 `r 是"控制台就地刷新"的手段，在文本框里只会变成
-    # 一长串空格与重叠的乱码。界面自己会在状态区显示进度。
-    if ($env:CCR_GUI -eq '1') {
-        Write-Output $Text
-        return
-    }
 
     # 补位宽度按终端实际宽度自适应（留 1 字符余量）。
     # 写死宽度会在窄窗口里折行，进度条就变成一行一行往下滚 ——
