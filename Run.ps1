@@ -92,7 +92,15 @@ param(
     [switch]$NoLaunch,
     [switch]$StopBrowserWhenDone,
     [switch]$NoClearScreen,
-    [switch]$NoArrangeWindows
+    [switch]$NoArrangeWindows,
+    # 只处理目录里的一段。两种写法都可以：
+    #   章号    -From 2        （第 2 章开头）
+    #   章.节   -From 1.3      （1.3 这一节）
+    # 不写 -From 就是第一节，不写 -To 就是最后一节。
+    [string]$From,
+    [string]$To,
+    # 只列出目录就退出，不播放。想先看看有哪些章节时用。
+    [switch]$ListChapters
 )
 
 $ErrorActionPreference = 'Stop'
@@ -115,6 +123,8 @@ Import-Module $libManifest -Force -DisableNameChecking
 # ---------------------------------------------------------------- 配置
 $overrides = @{}
 if ($PSBoundParameters.ContainsKey('LessonIds')) { $overrides.LessonIds = $LessonIds }
+if ($PSBoundParameters.ContainsKey('From')) { $overrides.From = $From }
+if ($PSBoundParameters.ContainsKey('To')) { $overrides.To = $To }
 if ($MaxLessons -gt 0) { $overrides.MaxLessons = $MaxLessons }
 if ($DebugPort -gt 0) { $overrides.DebugPort = $DebugPort }
 if ($PollSeconds -gt 0) { $overrides.PollSeconds = $PollSeconds }
@@ -697,7 +707,50 @@ try {
         exit $EXIT_NO_DIRECTORY
     }
 
+    # ---- 先把目录按章节显示出来 ----
+    # 使用者看的是"第1章/第2章"，不是课节 id，所以先摆出层级，
+    # 让人能决定从哪听到哪。
+    $tree = Get-ChapterTree -Session $session -Selectors $selectors -DirContextId $dirCtx
+    if ($tree.ChapterCount -gt 0) {
+        Write-Log ('课程目录（共 ' + $tree.ChapterCount + ' 章 ' + $allLessons.Count + ' 节）')
+        foreach ($ch in $tree.Chapters) {
+            $unfinInCh = @($ch.Lessons | Where-Object { $_.Unfinished }).Count
+            $mark = if ($unfinInCh -eq 0) { '全部完成' } else { ($unfinInCh.ToString() + ' 节未完成') }
+            Write-Log ('  ' + $ch.Index + '. ' + $ch.Title + '    (' + $ch.LessonCount + ' 节，' + $mark + ')')
+            foreach ($l in $ch.Lessons) {
+                $lm = if ($l.Unfinished) { '[ ]' } else { '[x]' }
+                Write-Log ('      ' + $lm + ' ' + $l.Title)
+            }
+        }
+    }
+
+    if ($ListChapters) {
+        Write-Log '只列目录，按 -ListChapters 的要求到此为止。' 'OK'
+        exit $EXIT_OK
+    }
+
+    # ---- 应用 -From / -To 范围 ----
+    $range = $null
+    if (-not [string]::IsNullOrWhiteSpace([string]$cfg.From) -or
+        -not [string]::IsNullOrWhiteSpace([string]$cfg.To)) {
+        $range = Resolve-LessonRange -Chapters $tree.Chapters -From ([string]$cfg.From) -To ([string]$cfg.To)
+        if (-not $range.Ok) {
+            Write-Log ('范围没解析成功：' + $range.Message) 'ERROR'
+            Write-Log '章号写 "2"，某一节写 "1.3"，也可以只写 -From 不写 -To。' 'ERROR'
+            exit $EXIT_BAD_ARGS
+        }
+        Write-Log ('本次范围：' + $range.FromText)
+        Write-Log ('         到 ' + $range.ToText + '（共 ' + $range.LessonIds.Count + ' 节）')
+    }
+
     $queue = @(Build-LessonQueue -Session $session -Limit ([int]$cfg.MaxLessons))
+
+    # 范围过滤：在队列上按 id 取交集，保持目录顺序
+    if ($range -and $range.Ok) {
+        $want = @{}
+        foreach ($id in $range.LessonIds) { $want[[string]$id] = $true }
+        $queue = @($queue | Where-Object { $want.ContainsKey([string]$_.Id) })
+    }
     if ($queue.Count -eq 0) {
         $unfinished = @($allLessons | Where-Object { $_.Unfinished })
         if ($unfinished.Count -eq 0) {

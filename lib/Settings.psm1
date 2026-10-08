@@ -134,6 +134,10 @@ function Get-RunnerSettings {
         StartUrl                = 'https://passport2.chaoxing.com/login'
         SwitchMode              = 'auto'
         LessonIds               = ''
+        # 只处理目录里的一段。空 = 不限制。
+        # 章号写 "2"，某一节写 "1.3"。
+        From                    = ''
+        To                      = ''
         MaxLessons              = 50
         MaxReplayPerLesson      = 1
         MaxWaitMinutesPerLesson = 40
