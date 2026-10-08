@@ -136,7 +136,6 @@ $selectors = Import-CourseSelectors
 
 Set-CdpLogPath -Path $cfg.LogFile
 
-
 # 控制台输出出口。
 # 图形界面版本没有控制台，Write-Host 会失败或产生乱码
 # （颜色与光标控制无处落脚），所以统一走这里：
@@ -531,10 +530,14 @@ if ($LaunchOnly) {
         # 不能等它自己好：Edge 冷启动时命令行里的 URL 常常没生效，
         # 窗口开着、地址栏空白；而且渲染进程还可能崩（实测该环境下
         # 配置目录里会留下 Crashpad 崩溃转储）。
+        # 无条件导航一次，不看当前地址是什么。
+        # 原因：命令行里明明带着 URL，Edge 有时仍停在 about:blank，
+        # 而且此时 /json 里读到的 url 可能是空串 —— 靠"地址不等于目标"
+        # 来判断并不可靠。直接发一条导航最稳。
         if ($tab -and $cfg.StartUrl) {
             $cur = ''
             if ($tab.PSObject.Properties['url'] -and $tab.url) { $cur = [string]$tab.url }
-            if ($cur -ne $cfg.StartUrl) {
+            if ($true) {
                 Write-Log '正在打开学习通页面…'
                 Write-CdpDiag ('标签页地址为 [' + $cur + ']，主动导航到 ' + $cfg.StartUrl)
                 if (Invoke-CdpNavigate -Page $tab -Port $cfg.DebugPort -Url $cfg.StartUrl) {

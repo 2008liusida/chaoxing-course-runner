@@ -91,6 +91,23 @@ function Start-DebugBrowser {
         New-Item -ItemType Directory -Path $ProfileDir -Force | Out-Null
     }
 
+    # 诊断：把实际收到的参数记下来。
+    # 现象是"浏览器打开 about:blank"，说明 URL 没传到位 ——
+    # 需要确认到这一步时 $StartUrl 到底是什么、拼出来的参数长什么样。
+    try {
+        $dbg = Join-Path $ProfileDir 'start-debug.txt'
+        $lines = @(
+            'time       = ' + (Get-Date).ToString('HH:mm:ss.fff')
+            'Exe        = ' + $Exe
+            'Port       = ' + $Port
+            'ProfileDir = ' + $ProfileDir
+            'StartUrl   = [' + $StartUrl + ']'
+            'StartUrl len = ' + $StartUrl.Length
+            'StartUrl type = ' + $StartUrl.GetType().FullName
+        )
+        Add-Content -Path $dbg -Value ($lines -join "`r`n") -Encoding UTF8
+    } catch { }
+
     $arguments = @(
         "--remote-debugging-port=$Port"
         '--remote-allow-origins=*'
@@ -99,34 +116,57 @@ function Start-DebugBrowser {
         '--no-default-browser-check'
         '--start-maximized'
 
-        # ---- 默认走软件渲染 ----
-        # 实测：在虚拟机里 GPU 进程会让渲染进程崩溃（配置目录里会留下
-        # Crashpad 崩溃转储），表现就是浏览器窗口一片空白、地址栏也是空的，
-        # 而且这种崩溃是间歇性的 —— 同一组参数有时好有时坏。
-        # 关掉 GPU 后不再出现。代价是视频不硬解，但本工具按 1 倍速播放，
-        # 软解完全够用。
-        #
-        # 注意不要加 --no-sandbox：那会让浏览器顶部出现
-        # "你使用的是不受支持的命令行标志" 警告条，影响观感，
-        # 而它并不是这里需要的。
+        # ---- 软件渲染 ----
+        # 虚拟机上 GPU 进程会让渲染进程崩溃（配置目录里会留下 Crashpad
+        # 崩溃转储）。代价是视频不硬解，但本工具按 1 倍速播放，软解够用。
         '--disable-gpu'
         '--disable-software-rasterizer'
 
         # Chromium 在 /dev/shm 太小时也会崩，精简系统与虚拟机上常见。
-        # 它同样不会触发警告条。
         '--disable-dev-shm-usage'
 
         $StartUrl
     )
 
+    # ---- 附加开关集中在这里加 ----
+    # 别在两个分支里各拼一次参数：之前 SafeRender 会重建整个数组，
+    # 把 --no-sandbox 丢掉，于是重试之后照样崩。
+    $extra = @()
     if ($SafeRender) {
-        # 保留这个开关：调用方在页面检查失败后可要求重试。
-        # 上面已经默认软件渲染，这里再补一项彻底避开 GPU 合成路径。
-        $arguments = $arguments[0..($arguments.Count - 2)] +
-            @('--disable-gpu-compositing', $StartUrl)
+        # 调用方在页面检查失败后会要求重试，再补一项彻底避开 GPU 合成
+        $extra += '--disable-gpu-compositing'
+    }
+    if ($env:CCR_GUI -eq '1') {
+        $extra += '--no-sandbox'
     }
 
+    if ($extra.Count -gt 0) {
+        # $arguments 的最后一项是 $StartUrl，插在它前面
+        $arguments = $arguments[0..($arguments.Count - 2)] + $extra + @($StartUrl)
+    }
+
+    # 诊断：记录拼出来的参数，以及 Edge 实际收到的命令行
+    try {
+        $dbg = Join-Path $ProfileDir 'start-debug.txt'
+        Add-Content -Path $dbg -Value ("`r`n拼出的参数（" + $arguments.Count + " 项）:") -Encoding UTF8
+        $i = 0
+        foreach ($a in $arguments) { $i++; Add-Content -Path $dbg -Value ('  [' + $i + '] ' + $a) -Encoding UTF8 }
+    } catch { }
+
     Start-Process -FilePath $Exe -ArgumentList $arguments | Out-Null
+
+    # 诊断：Edge 进程真正拿到的命令行
+    Start-Sleep -Milliseconds 1500
+    try {
+        $dbg = Join-Path $ProfileDir 'start-debug.txt'
+        $needle = $ProfileDir
+        $procs = @(Get-CimInstance Win32_Process -Filter "Name='msedge.exe'" -ErrorAction SilentlyContinue |
+            Where-Object { $_.CommandLine -and $_.CommandLine.Contains($needle) -and $_.CommandLine -notmatch '--type=' })
+        Add-Content -Path $dbg -Value ("`r`nEdge 主进程数: " + $procs.Count) -Encoding UTF8
+        foreach ($pr in $procs) {
+            Add-Content -Path $dbg -Value ('  PID ' + $pr.ProcessId + ' CMD: ' + $pr.CommandLine) -Encoding UTF8
+        }
+    } catch { }
 
     # 冷启动可能较慢（首次建配置目录），最多等约 30 秒
     for ($i = 0; $i -lt 40; $i++) {

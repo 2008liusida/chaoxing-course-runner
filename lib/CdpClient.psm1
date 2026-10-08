@@ -184,10 +184,14 @@ function Test-PageLoaded {
             $s = New-CdpSession -Page $Page -Port $Port
             $own = $true
         } catch {
+            # 连不上会话 —— 多半是渲染进程崩了。
+            # 这里不能返回 Loaded=$true：会掩盖崩溃，
+            # 上层就不重试了，使用者只看到白窗口。
+            Write-CdpDiag ('建立会话失败: ' + $_.Exception.Message)
             return [pscustomobject]@{
-                Loaded = $true; Url = $rawUrl; Title = ''
+                Loaded = $false; Url = $rawUrl; Title = ''
                 BodyLen = -1; Waited = $waited
-                Reason = ('有地址但读不到正文（页面可能还在加载）: ' + $_.Exception.Message)
+                Reason = ('连不上页面（渲染进程可能已崩溃）: ' + $_.Exception.Message)
             }
         }
     }
@@ -217,7 +221,11 @@ function Test-PageLoaded {
                     $o = $r.Value | ConvertFrom-Json
                     $title = [string]$o.t
                     $bodyLen = [int]$o.n
-                    if ($title -or $bodyLen -gt 0) { $loaded = $true; $reason = ''; break }
+                    # 必须有标题才算成功。
+                # 只靠"正文长度大于 0"不够：白屏时 body 里往往还有
+                # 外壳元素，innerText 却可能是空的或几个字，
+                # 实测就因此把白屏判成了加载成功。
+                if ($title) { $loaded = $true; $reason = ''; break }
                 } catch { }
             }
 
@@ -240,12 +248,25 @@ function Test-PageLoaded {
     # 之前放得太宽（有地址就算成功，甚至地址为空也算），
     # 结果空白页被当成成功 —— 日志打出"页面已加载: "后面是空的，
     # 上层的重试逻辑因此永远不触发。
+    # 最后一道关：地址与标题必须都有。
+    # 渲染进程崩溃时地址可能是空的、也可能残留上一次的值，
+    # 两种都不能算加载成功。
+    if ($loaded -and (-not $rawUrl -or -not $title)) {
+        $loaded = $false
+        $reason = ('判定依据不足（地址=[' + $rawUrl + '] 标题=[' + $title + ']）')
+    }
     if (-not $loaded) {
         if (-not $reason) {
-            if ($rawUrl) { $reason = '有地址，但读不到正文（页面可能还在加载）' }
-            else { $reason = '页面没有地址也没有正文（导航没发生或渲染进程崩了）' }
+            if ($rawUrl) { $reason = '有地址，但读不到标题（页面可能还在加载）' }
+            else { $reason = '页面没有地址也没有标题（导航没发生或渲染进程崩了）' }
         }
     }
+
+    # 把判定依据也带上：排查"为什么被当成加载成功"时全靠它。
+    # 之前的日志只打 Title，标题为空时看不出到底哪一项让判定通过的。
+    Write-CdpDiag ('Test-PageLoaded: Loaded=' + $loaded +
+        ' Url=[' + $rawUrl + '] Title=[' + $title + '] BodyLen=' + $bodyLen +
+        ' 等待=' + [math]::Round($waited, 1) + 's')
 
     return [pscustomobject]@{
         Loaded = $loaded; Url = $rawUrl; Title = $title; BodyLen = $bodyLen
