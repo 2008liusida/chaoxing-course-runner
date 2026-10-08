@@ -62,6 +62,7 @@
         'Write-ConsoleLine'
         'Test-PageLoaded'
         'Invoke-CdpNavigate'
+        'Find-VideoFrameContext'
         'Read-RunnerConfigFile'
         'Get-RunnerSettings'
 

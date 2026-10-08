@@ -19,8 +19,15 @@ function Get-VideoContext {
     <#
     .SYNOPSIS
         获取播放器层 iframe 的执行上下文 id。
+    .DESCRIPTION
+        两条路：
+          1) 按 URL 特征找（快）—— 绝大多数情况走这条；
+          2) 找不到时，遍历所有帧找真正含 <video> 的那个（慢但通用）。
+        第 2 条是兜底：各学校的播放器路径不一样，写死 URL 特征迟早会失效，
+        失效时的表现是"这一节没有视频"，然后整节课被跳过 —— 静默漏刷，
+        使用者很难发现。宁可多花一轮 CDP 也要找出来。
     .OUTPUTS
-        Int32；该课节没有视频（例如作业/讨论类任务点）时返回 0。
+        Int32；该课节确实没有视频（例如作业/讨论类任务点）时返回 0。
     .EXAMPLE
         $vctx = Get-VideoContext -Session $s -Selectors $sel
         if ($vctx -le 0) { '这一节没有视频' }
@@ -30,7 +37,17 @@ function Get-VideoContext {
         [Parameter(Mandatory)]$Session,
         [Parameter(Mandatory)][hashtable]$Selectors
     )
-    return Get-FrameContext -Session $Session -UrlPattern ([string]$Selectors.VideoFramePattern)
+
+    $pattern = [string]$Selectors.VideoFramePattern
+    $ctx = 0
+    if ($pattern) {
+        $ctx = [int](Get-FrameContext -Session $Session -UrlPattern $pattern)
+    }
+    if ($ctx -gt 0) { return $ctx }
+
+    # URL 没匹配上 —— 不急着下"没有视频"的结论，先按 video 元素找一遍。
+    Write-CdpDiag ('按 URL 特征 [' + $pattern + '] 没找到播放器帧，改用 video 元素查找')
+    return [int](Find-VideoFrameContext -Session $Session)
 }
 
 function Get-CardsContext {

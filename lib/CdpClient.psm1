@@ -710,6 +710,83 @@ function Get-CdpFrames {
     return $list
 }
 
+function Find-VideoFrameContext {
+    <#
+    .SYNOPSIS
+        找出"真正含 <video> 元素"的那个帧，返回其执行上下文 id。
+    .DESCRIPTION
+        为什么需要它：Get-FrameContext 靠 iframe 的 URL 特征匹配
+        （例如 ananas/modules/video）。各学校的播放器路径不一样，
+        一旦对不上，整节课就被判成"这一节没有视频"。
+
+        这个函数不看 URL，而是挨个帧注入一段探测脚本，看里面有没有
+        真的 <video>。代价是要多跑几轮 CDP，所以只在主路径失败时调用。
+
+        探测时会顺带要求 video 有非零时长或已就绪：
+        页面里常有隐藏的占位 <video>，光看标签存在会误判。
+    .PARAMETER Session
+        CDP 会话。
+    .PARAMETER SkipPattern
+        可选：URL 匹配它的帧跳过（一般不用）。
+    .OUTPUTS
+        Int32：contextId；找不到返回 0。
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$Session,
+        [string]$SkipPattern = ''
+    )
+
+    $probeJs = @'
+(function(){
+  var vs = document.querySelectorAll('video');
+  if (!vs.length) return '0';
+  for (var i = 0; i < vs.length; i++){
+    var v = vs[i];
+    // 只认"像样的"视频：有时长，或者已经加载出数据
+    if ((v.duration && v.duration > 0) || v.readyState > 0) {
+      return '1|' + Math.round(v.duration || 0) + '|' + v.readyState;
+    }
+  }
+  // 有 video 但都没就绪，也算候选（可能还在加载）
+  return '2|0|' + vs[0].readyState;
+})()
+'@
+
+    foreach ($f in (Get-CdpFrames -Session $Session)) {
+        if ($SkipPattern -and $f.Url -match $SkipPattern) { continue }
+        # 顶层文档一般不是播放器所在，跳掉省一轮
+        if (-not $f.Url -or $f.Url -eq 'about:blank') { continue }
+
+        $ctx = 0
+        try {
+            $resp = Send-Cdp -Session $Session -Method 'Page.createIsolatedWorld' -Params @{
+                frameId             = $f.Id
+                worldName           = 'ccrv' + [Guid]::NewGuid().ToString('N').Substring(0, 8)
+                grantUniveralAccess = $true
+            }
+            $ctx = [int](Get-CdpField -Object $resp -Path 'result.executionContextId')
+        } catch {
+            continue
+        }
+        if ($ctx -le 0) { continue }
+
+        $r = $null
+        try { $r = Invoke-CdpJs -Session $Session -Expression $probeJs -ContextId $ctx } catch { $r = $null }
+        if ($r -and -not $r.Error -and $r.Value) {
+            $v = [string]$r.Value
+            if ($v.StartsWith('1|') -or $v.StartsWith('2|')) {
+                Write-CdpDiag ('按 video 元素找到播放器帧: ' + $f.Url +
+                    '  探测=[' + $v + ']')
+                return $ctx
+            }
+        }
+    }
+
+    Write-CdpDiag '遍历所有帧都没找到含 video 的帧'
+    return 0
+}
+
 function Get-FrameContext {
     <#
     .SYNOPSIS
