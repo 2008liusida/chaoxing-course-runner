@@ -63,6 +63,8 @@
         'Test-PageLoaded'
         'Invoke-CdpNavigate'
         'Find-VideoFrameContext'
+        'Get-VideoFrameContexts'
+        'Get-AllVideoContexts'
         'Read-RunnerConfigFile'
         'Get-RunnerSettings'
 

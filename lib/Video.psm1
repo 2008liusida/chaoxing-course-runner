@@ -50,6 +50,26 @@ function Get-VideoContext {
     return [int](Find-VideoFrameContext -Session $Session)
 }
 
+function Get-AllVideoContexts {
+    <#
+    .SYNOPSIS
+        列出本节所有视频任务点的执行上下文 id（按页面顺序）。
+    .DESCRIPTION
+        一节课可能有多个视频任务点。原来的 Get-VideoContext 只给第一个，
+        导致多视频课节只播第一个就以为完事。
+    .OUTPUTS
+        Int32[]；本节没有视频时返回空数组。
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$Session,
+        [Parameter(Mandatory)][hashtable]$Selectors
+    )
+    $pattern = [string]$Selectors.VideoFramePattern
+    if (-not $pattern) { return @() }
+    return @(Get-VideoFrameContexts -Session $Session -UrlPattern $pattern)
+}
+
 function Get-CardsContext {
     <#
     .SYNOPSIS

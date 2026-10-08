@@ -107,9 +107,22 @@ function Invoke-Lesson {
     $lastPosition = -1.0
     $stallCount = 0
     $lastMilestoneMin = -1
+    # 一节课可能有多个视频任务点（实测 1.4 节有两个），每个视频在自己的
+    # iframe 里。原来只取第一个，于是播完第一个就以为整节完成，
+    # 其余任务点没做、课节永远完不成。这里记住当前在播第几个。
+    $videoIndex = 0
+    $videoTotal = 0
 
     while ((Get-Date) -lt $deadline) {
-        $videoCtx = Get-VideoContext -Session $Session -Selectors $Selectors
+        # 每次重新枚举，因为第二个视频的 iframe 往往要等第一个播完才加载出时长
+        $videoCtxs = @(Get-AllVideoContexts -Session $Session -Selectors $Selectors)
+        if ($videoCtxs.Count -gt 0) { $videoTotal = $videoCtxs.Count }
+        if ($videoIndex -ge $videoCtxs.Count) { $videoIndex = [Math]::Max(0, $videoCtxs.Count - 1) }
+        $videoCtx = if ($videoCtxs.Count -gt 0) { [int]$videoCtxs[$videoIndex] } else { 0 }
+
+        if ($videoTotal -gt 1 -and $videoCtx -gt 0 -and -not $playbackStarted) {
+            Say ('本节有 ' + $videoTotal + ' 个视频任务点，先从第 ' + ($videoIndex + 1) + ' 个开始') 'INFO'
+        }
 
         # 保证页面可见：Chromium 在页面 hidden 时不允许加载/播放视频。
         # 传入 VideoContextId 后，函数会先只读可见性 —— 正常情况直接返回，
@@ -217,7 +230,9 @@ function Invoke-Lesson {
         if ($jobDone) {
             $watched = 0.0
             if ($state.Duration -gt 0) { $watched = $state.Current / $state.Duration }
-            $needRatio = 0.90
+            # 实测有课节写"观看时长需 ≥ 总时长的 100%"，所以按 100% 播最保险：
+            # 播满一定满足 90% 的要求，反之不成立。
+            $needRatio = 1.00
 
             if ($state.Duration -le 0) {
                 # 时长都没读到，无从判断 —— 不当成完成
@@ -321,7 +336,30 @@ function Invoke-Lesson {
         }
 
         # ---- 播到结尾 ----
-        if ($state.Current -ge ($state.Duration - 2)) {
+        if ($state.Current -ge ($state.Duration - 1)) {
+            # 先看这一节还有没有别的视频任务点没播。
+            # 有就接着播下一个，别急着宣布整节完成。
+            $ctxsNow = @(Get-AllVideoContexts -Session $Session -Selectors $Selectors)
+            $nextIdx = -1
+            for ($k = $videoIndex + 1; $k -lt $ctxsNow.Count; $k++) {
+                $st2 = Get-VideoState -Session $Session -ContextId ([int]$ctxsNow[$k])
+                # 还没播完的（时长未知也算，它可能只是还没加载）
+                if ($st2.Ok -and ($st2.Duration -le 0 -or $st2.Current -lt ($st2.Duration - 2))) {
+                    $nextIdx = $k
+                    break
+                }
+            }
+            if ($nextIdx -ge 0) {
+                Say ('第 ' + ($videoIndex + 1) + ' 个视频已播完，接着播第 ' + ($nextIdx + 1) + ' 个（共 ' + $ctxsNow.Count + ' 个任务点）') 'INFO'
+                $videoIndex = $nextIdx
+                $playbackStarted = $false
+                $lastPosition = -1.0
+                $stallCount = 0
+                $lastMilestoneMin = -1
+                Start-Sleep -Seconds 5
+                continue
+            }
+
             Say '已播到结尾，等待平台登记完成状态…'
 
             # 已播到结尾，所以此时 DOM 标记是可信的 —— 位置本身已经证明播完了。

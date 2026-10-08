@@ -713,6 +713,50 @@ function Get-CdpFrames {
     return $list
 }
 
+function Get-VideoFrameContexts {
+    <#
+    .SYNOPSIS
+        列出这一节**所有**播放器帧的执行上下文 id。
+    .DESCRIPTION
+        为什么需要它：一节课可以有多个视频任务点，每个视频在自己的
+        iframe 里（实测 1.4 节有两个 video 任务点，两个 ananas/modules/video 帧）。
+        原来只用 Get-FrameContext 取第一个匹配的帧，于是播完第一个视频
+        就以为整节完成了 —— 其余视频任务点没做，课节永远完不成。
+    .PARAMETER Session
+        CDP 会话。
+    .PARAMETER UrlPattern
+        播放器帧的 URL 特征。
+    .OUTPUTS
+        Int32[]：各播放器帧的 contextId，按页面顺序。
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$Session,
+        [Parameter(Mandatory)][string]$UrlPattern
+    )
+
+    $result = New-Object System.Collections.ArrayList
+    foreach ($f in (Get-CdpFrames -Session $Session)) {
+        if ($f.Url -notmatch $UrlPattern) { continue }
+        $ctx = 0
+        try {
+            $resp = Send-Cdp -Session $Session -Method 'Page.createIsolatedWorld' -Params @{
+                frameId             = $f.Id
+                worldName           = 'ccrvf' + [Guid]::NewGuid().ToString('N').Substring(0, 8)
+                grantUniveralAccess = $true
+            }
+            $ctx = [int](Get-CdpField -Object $resp -Path 'result.executionContextId')
+        } catch {
+            Write-CdpDiag ('Get-VideoFrameContexts: 建会话失败 ' + $f.Url + ' -> ' + $_.Exception.Message)
+            continue
+        }
+        if ($ctx -gt 0) { [void]$result.Add($ctx) }
+    }
+
+    Write-CdpDiag ('Get-VideoFrameContexts: 命中 ' + $result.Count + ' 个播放器帧')
+    return $result.ToArray()
+}
+
 function Find-VideoFrameContext {
     <#
     .SYNOPSIS
