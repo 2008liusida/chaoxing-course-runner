@@ -96,6 +96,11 @@ function Invoke-Lesson {
     $replayLeft = [int]$Settings.MaxReplayPerLesson
     $deadline = (Get-Date).AddMinutes([double]$Settings.MaxWaitMinutesPerLesson)
     $noVideoPolls = 0
+    # 连续多少轮发现"页面停在别的课节"。
+    # 切换课节时 #curChapterId 会短暂保留旧值，所以要容许几轮，
+    # 不能一读到不一致就判本节失败。必须在循环外初始化：
+    # 本模块开了 Set-StrictMode -Version Latest，未初始化的变量自增会抛错。
+    $awayPolls = 0
     $reloadTried = $false
     $playbackStarted = $false
     $lastPosition = -1.0
@@ -129,10 +134,27 @@ function Invoke-Lesson {
             $noVideoPolls++
             Start-Sleep -Seconds 6
 
-            if ((Get-CurrentLessonId -Session $Session -Selectors $Selectors) -ne $Lesson.Id) {
-                Say '页面已跳走（登录过期或平台跳转），本节中止' 'WARN'
+            # 先判断"当前课节"到底是谁。
+            # 三种情况要分开处理，不能一律判失败：
+            #   a) 页面停在别的课节 —— 可能只是切换还没完成，
+            #      也可能使用者自己点了目录跳走；后者不该算失败，
+            #      记下来下一轮重来时再补。
+            #   b) 页面停在本节，但视频帧还读不到 —— 纯粹是时机问题，继续等。
+            #   c) 本节其实已经完成 —— 直接算成功。
+            $curId = [string](Get-CurrentLessonId -Session $Session -Selectors $Selectors)
+            if ($curId -and $curId -ne $Lesson.Id) {
+                # 给切换留出时间：连等 3 轮（约 18 秒）再下结论
+                $awayPolls++
+                if ($awayPolls -lt 3) {
+                    Write-ProgressLine ("页面似乎在别的课节（" + $curId + "），等它切回来…")
+                    continue
+                }
+                Write-CdpDiag ('课节 ' + $Lesson.Id + ' 中途页面停在 ' + $curId +
+                    '，读不到视频帧，本节跳过，稍后重来')
+                Say ("页面停在别的课节（" + $curId + "），本节先跳过，稍后重来: " + $Lesson.Id) 'WARN'
                 return $false
             }
+            $awayPolls = 0
 
             $latest = Get-LessonById -Session $Session -Selectors $Selectors -LessonId $Lesson.Id
             if ($latest -and -not $latest.Unfinished) {
@@ -154,6 +176,7 @@ function Invoke-Lesson {
             continue
         }
         $noVideoPolls = 0
+        $awayPolls = 0
 
         # ---- 平台是否已登记完成 ----
         $cardsCtx = Get-CardsContext -Session $Session -Selectors $Selectors
