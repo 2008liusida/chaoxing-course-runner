@@ -703,43 +703,60 @@ try {
     $rawSelectors = $selectors
     $plat = Resolve-Platform -Session $session -RawSelectors $rawSelectors
 
-    # 认不出已知版本时，先自己到页面上把结构找出来，别急着退出。
-    # 各版本的选择器是写死的，学习通一改版就全不匹配；
-    # 但平台有几条跨版本稳定的约定可以依靠（课节 id 形如 cur<数字>、
-    # 切课函数 getTeacherAjax、课程/班级放在隐藏 input 里）。
-    # 靠这些能现场还原结构，让工具"尽力而为"而不是"直接放弃"。
-    if ($plat.Version -eq '') {
-        Write-Log '已知的三个版本都没匹配上，正在按平台约定现场探测页面结构…' 'WARN'
-        $disc = Discover-CoursePage -Session $session -RawSelectors $rawSelectors -DirContextId 0
+    # ---- 无论认不认得出版本，都按平台约定再实测一遍页面结构 ----
+    #
+    # 为什么"总是"要做这一步，而不是只在认不出时兜底：
+    # 各版本的选择器是写死的（legacy 认 h5、mooc2 认 posCatalog_select …），
+    # 于是每加一个功能都得在每个平台上各做一遍 —— 换个学校功能就没了。
+    # 通用发现不依赖 class 名，只看平台跨版本稳定的约定：
+    #     · 课节节点 id 形如 cur<数字>
+    #     · 切课函数是 getTeacherAjax
+    #     · 课程/班级/当前课节放在隐藏 input 里
+    #     · 未完成计数在某个隐藏 input 里
+    # 一次实测就能把结构还原出来，对所有版本都成立。
+    #
+    # 发现失败时不改变已有结果，但要明确提示 —— 静默降级会让人以为功能还在。
+    $disc = Discover-CoursePage -Session $session -RawSelectors $rawSelectors -DirContextId 0
+    Write-CdpDiag ('结构实测: ' + ($disc.Reasons -join ' | '))
 
-        foreach ($why in @($disc.Reasons)) { Write-Log ('  探测: ' + $why) }
-        Write-CdpDiag ('兜底探测结果: ' + ($disc.Reasons -join ' | '))
-
-        if (-not $disc.Ok) {
-            Write-Log ('没能自动识别这个页面：' + $disc.Message) 'ERROR'
-            Write-Log '确认一下：打开的是课程的「学生学习页面」（左目录右视频那种）。' 'ERROR'
-            Write-Log '如果页面没问题，麻烦把这个课的页面结构反馈给作者，好加入支持。' 'ERROR'
-            exit $EXIT_NO_DIRECTORY
+    if ($disc.Ok) {
+        $merged = @{}
+        if ($plat.Selectors) {
+            # 已知版本的成果先铺底
+            foreach ($k in $plat.Selectors.Keys) { $merged[$k] = $plat.Selectors[$k] }
+        } else {
+            foreach ($k in $rawSelectors.common.Keys) { $merged[$k] = $rawSelectors.common[$k] }
         }
-
+        # 实测到的值覆盖上去（它反映页面当前真实结构）
+        foreach ($k in $disc.Selectors.Keys) {
+            $v = $disc.Selectors[$k]
+            if ($null -ne $v -and -not [string]::IsNullOrWhiteSpace([string]$v)) { $merged[$k] = $v }
+        }
         $plat = [pscustomobject]@{
-            Version      = 'discovered'
-            Selectors    = $disc.Selectors
-            DirContextId = 0
-            LegacyCount  = 0
-            Mooc2Count   = 0
-            CoursetreeCount = 0
+            Version         = $(if ($plat.Version) { $plat.Version } else { 'discovered' })
+            Selectors       = $merged
+            DirContextId    = $plat.DirContextId
+            LegacyCount     = $plat.LegacyCount
+            Mooc2Count      = $plat.Mooc2Count
+            CoursetreeCount = $plat.CoursetreeCount
         }
+    } elseif ($plat.Version -eq '') {
+        # 既认不出已知版本，实测也没成功 —— 这时才真的没法继续
+        Write-Log '这个页面的结构没能识别出来。' 'ERROR'
+        foreach ($why in @($disc.Reasons)) { Write-Log ('  实测: ' + $why) 'ERROR' }
+        Write-Log ('原因：' + $disc.Message) 'ERROR'
+        Write-Log '确认一下：打开的是课程的「学生学习页面」（左目录右视频那种）。' 'ERROR'
+        Write-Log '如果页面没问题，麻烦把这个课的页面结构反馈给作者，好加入支持。' 'ERROR'
+        exit $EXIT_NO_DIRECTORY
+    } else {
+        Write-Log '结构实测没成功，沿用已知版本的判定。' 'WARN'
+        Write-Log ('  ' + $disc.Message) 'WARN'
     }
 
     $selectors = $plat.Selectors
     $dirCtx = $plat.DirContextId
-    if ($plat.Version -eq 'discovered') {
-        Write-Log '平台版本: 未登记的结构（已按页面约定自动适配）' 'WARN'
-        Write-Log '  能跑，但这个版本没有经过完整验证。要是哪里不对，把日志发给作者。' 'WARN'
-    } else {
-        Write-Log ('平台版本: ' + $plat.Version + $(if ($dirCtx -gt 0) { '（目录在 iframe 内）' } else { '' }))
-    }
+    Write-Log ('平台版本: ' + $plat.Version + $(if ($dirCtx -gt 0) { '（目录在 iframe 内）' } else { '' }) +
+        $(if ($disc.Ok) { '（结构已按页面实测校正）' } else { '' }))
 
     if (-not (Test-LoggedIn -Session $session -Selectors $selectors)) {
         Write-Log '这页面不对！要么没登录，要么登录过期了。登完重跑。' 'ERROR'
