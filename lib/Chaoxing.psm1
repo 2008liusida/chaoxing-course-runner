@@ -90,11 +90,15 @@ function Get-ChapterTree {
     $prefix = if ($Selectors.ContainsKey('LessonIdPrefix')) { [string]$Selectors.LessonIdPrefix } else { 'cur' }
 
     $rootSel = if ($Selectors.ContainsKey('DirectoryRoot')) { [string]$Selectors.DirectoryRoot } else { '' }
+    # 兜底发现可能会报一个"章标记"（未知结构下靠结构推出来的 class 名）。
+    # 已知版本不需要它 —— 它们各有特征 class，靠 isChapter 里的规则就能认。
+    $chapterMark = if ($Selectors.ContainsKey('ChapterNodeMark')) { [string]$Selectors.ChapterNodeMark } else { '' }
     $n = ConvertTo-JsLiteral -Value $nodeSel
     $r = ConvertTo-JsLiteral -Value $rowSel
     $c = ConvertTo-JsLiteral -Value $cntSel
     $p2 = ConvertTo-JsLiteral -Value $prefix
     $rootSelJs = ConvertTo-JsLiteral -Value $rootSel
+    $chapterMarkJs = ConvertTo-JsLiteral -Value $chapterMark
 
     $js = @"
 (function(){
@@ -118,6 +122,8 @@ function Get-ChapterTree {
     if (cls.indexOf(' cells ') >= 0 && cls.indexOf(' ncells ') < 0) return true;
     // mooc2：章与节同名，靠 firstLayer 区分
     if (cls.indexOf(' posCatalog_select ') >= 0 && cls.indexOf(' firstLayer ') >= 0) return true;
+    // 未知结构：用兜底发现推出来的章标记
+    if (chapterMark && cls.indexOf(' ' + chapterMark + ' ') >= 0) return true;
     return false;
   }
 
@@ -494,26 +500,51 @@ function Get-LessonList {
     var rawState = '';
     var unfinishCount = -1;
 
-    var row = node;
-    for (var up = 0; up < 4; up++) {
-      var foundDot = (typeof S.LessonStateDot === 'string' && S.LessonStateDot)
-        ? row.querySelector(S.LessonStateDot) : null;
-      var foundCnt = (typeof S.UnfinishedCount === 'string' && S.UnfinishedCount)
-        ? row.querySelector(S.UnfinishedCount) : null;
-      if (foundDot || foundCnt) { break; }
-      if (!row.parentElement) { row = node; break; }
-      row = row.parentElement;
+    // 行容器：只取课节节点的直接父节点，不向上爬。
+    // 爬升会撞上"整章容器"（里面装着 5~6 节），在那里面查状态会读到别的课节。
+    var row = node.parentElement || node;
+
+    // ---- 状态标记从哪儿找 ----
+    // 实测结构：课节自己的计数与徽标都在课节节点**内部**：
+    //     <div class="ncells">
+    //       <h4 id="cur1260026233" class="currents">
+    //         <input type="hidden" class="jobUnfinishCount" value="1">
+    //         <span class="roundpointStudent orange01 jobCount">1</span>
+    //         <a ...><span>1.3 向量的内积</span></a>
+    //       </h4>
+    //     </div>
+    // 已完成的节：h4 里既没有计数 input，也没有 jobCount 徽标。
+    //
+    // 所以判定要在**课节节点自身**范围内做，绝不能在整个行容器里查 ——
+    // 行容器里一旦装着别的课节，读到的就是别人的计数（踩过这个坑：
+    // 爬升到整章容器读到别的节的计数，已完成的节被判成未完成，反复重刷）。
+    function stateScope() {
+      // 优先课节节点自身；它内部没有标记时再看行容器
+      // （有些版本把标记放在行容器里、与标题同级）。
+      var rowHas = null;
+      if (row && row !== node) {
+        try {
+          rowHas = row.querySelector(S.UnfinishedCount || '') ;
+        } catch (e) { rowHas = null; }
+      }
+      // 行容器里有，但课节节点里没有 -> 说明标记在行容器这一级
+      if (rowHas && !node.querySelector(S.UnfinishedCount || '')) { return row; }
+      return node;
     }
+    var scope = stateScope();
 
     if (typeof S.LessonStateDot === 'string' && S.LessonStateDot) {
-      var dot = row.querySelector(S.LessonStateDot);
+      var dot = null;
+      try { dot = scope.querySelector(S.LessonStateDot); } catch (e) { }
       if (dot) {
         rawState = dot.className || '';
         if (S.UnfinishedMark) { unfinished = rawState.indexOf(S.UnfinishedMark) >= 0; }
       }
     }
+
     if (typeof S.UnfinishedCount === 'string' && S.UnfinishedCount) {
-      var inp = row.querySelector(S.UnfinishedCount);
+      var inp = null;
+      try { inp = scope.querySelector(S.UnfinishedCount); } catch (e) { }
       if (inp) {
         var v = parseInt(inp.value, 10);
         if (!isNaN(v)) {
@@ -521,6 +552,14 @@ function Get-LessonList {
           if (S.UnfinishedByMode === 'job-count') { unfinished = v > 0; }
           if (!rawState) { rawState = 'jobUnfinishCount=' + v; }
         }
+      } else if (S.UnfinishedByMode === 'job-count') {
+        // 这一范围里压根没有计数元素。
+        // 实测平台就是这么做标记的：整节做完后，计数 input 与橙色徽标一起消失。
+        // 所以"没有计数元素"= 已完成；不能当成"读不到、按未完成算" ——
+        // 那样已完成的节每轮都会被重刷，永远刷不完。
+        unfinishCount = 0;
+        unfinished = false;
+        if (!rawState) { rawState = '(无计数元素=已完成)'; }
       }
     }
 

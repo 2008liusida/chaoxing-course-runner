@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>内容层（未知版本夹具）</title>
+<!--
+  "未知版本"夹具的内容层，结构同样刻意与已知三个版本不同，
+  但保留 .ans-job-icon + aria-label 这个跨版本稳定的完成状态约定。
+-->
+<style>
+  body { font-family: "Microsoft Yahei", sans-serif; margin: 0; padding: 6px; }
+  .videoContainer { position: relative; }
+  .stateIcon { display: inline-block; width: 16px; height: 16px; border-radius: 3px; background: #e67e22; }
+  .stateIcon.done { background: #2ecc71; }
+  .taskNote { font-size: 12px; color: #666; }
+</style>
+</head>
+<body>
+
+<div class="videoContainer">
+  <!-- 完成状态写在 aria-label 里 —— 这是兜底发现依赖的约定。
+       同时保留 ans-job-icon 这个 class，因为工具读状态用的就是它。 -->
+  <div class="stateIcon ans-job-icon" aria-label="任务点未完成" role="option"></div>
+  <div class="taskNote">完成条件：观看时长需 ≥ 总时长的 100%</div>
+  <iframe id="player" width="360" height="220" src="../ananas/modules/video/index.html"></iframe>
+</div>
+
+<script>
+  // 把当前课节的完成状态同步到 aria-label 与图标颜色上，
+  // 模拟真实页面在切课后刷新任务点状态的行为。
+  (function () {
+    var q = new URLSearchParams(location.search);
+    var done = q.get('done') === '1';
+    var ic = document.querySelector('.ans-job-icon');
+    if (ic) {
+      ic.setAttribute('aria-label', done ? '任务点已完成' : '任务点未完成');
+      if (done) { ic.className = 'stateIcon ans-job-icon done'; }
+    }
+    var p = document.getElementById('player');
+    if (p) { p.src = '../ananas/modules/video/index.html?dur=' + (q.get('dur') || '5'); }
+  })();
+</script>
+</body>
+</html>

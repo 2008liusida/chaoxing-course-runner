@@ -702,14 +702,44 @@ try {
     # 目录在 iframe 内的版本（mooc2）还需要 DirContextId，后续读取都要带上。
     $rawSelectors = $selectors
     $plat = Resolve-Platform -Session $session -RawSelectors $rawSelectors
+
+    # 认不出已知版本时，先自己到页面上把结构找出来，别急着退出。
+    # 各版本的选择器是写死的，学习通一改版就全不匹配；
+    # 但平台有几条跨版本稳定的约定可以依靠（课节 id 形如 cur<数字>、
+    # 切课函数 getTeacherAjax、课程/班级放在隐藏 input 里）。
+    # 靠这些能现场还原结构，让工具"尽力而为"而不是"直接放弃"。
     if ($plat.Version -eq '') {
-        Write-Log '页面是课程页，但版本我不认识。学习通大概又改版了。' 'ERROR'
-        Write-Log '确认一下：打开的是课程的「学生学习页面」。不行就刷新一下重跑。' 'ERROR'
-        exit $EXIT_NO_DIRECTORY
+        Write-Log '已知的三个版本都没匹配上，正在按平台约定现场探测页面结构…' 'WARN'
+        $disc = Discover-CoursePage -Session $session -RawSelectors $rawSelectors -DirContextId 0
+
+        foreach ($why in @($disc.Reasons)) { Write-Log ('  探测: ' + $why) }
+        Write-CdpDiag ('兜底探测结果: ' + ($disc.Reasons -join ' | '))
+
+        if (-not $disc.Ok) {
+            Write-Log ('没能自动识别这个页面：' + $disc.Message) 'ERROR'
+            Write-Log '确认一下：打开的是课程的「学生学习页面」（左目录右视频那种）。' 'ERROR'
+            Write-Log '如果页面没问题，麻烦把这个课的页面结构反馈给作者，好加入支持。' 'ERROR'
+            exit $EXIT_NO_DIRECTORY
+        }
+
+        $plat = [pscustomobject]@{
+            Version      = 'discovered'
+            Selectors    = $disc.Selectors
+            DirContextId = 0
+            LegacyCount  = 0
+            Mooc2Count   = 0
+            CoursetreeCount = 0
+        }
     }
+
     $selectors = $plat.Selectors
     $dirCtx = $plat.DirContextId
-    Write-Log ('平台版本: ' + $plat.Version + $(if ($dirCtx -gt 0) { '（目录在 iframe 内）' } else { '' }))
+    if ($plat.Version -eq 'discovered') {
+        Write-Log '平台版本: 未登记的结构（已按页面约定自动适配）' 'WARN'
+        Write-Log '  能跑，但这个版本没有经过完整验证。要是哪里不对，把日志发给作者。' 'WARN'
+    } else {
+        Write-Log ('平台版本: ' + $plat.Version + $(if ($dirCtx -gt 0) { '（目录在 iframe 内）' } else { '' }))
+    }
 
     if (-not (Test-LoggedIn -Session $session -Selectors $selectors)) {
         Write-Log '这页面不对！要么没登录，要么登录过期了。登完重跑。' 'ERROR'

@@ -73,6 +73,7 @@
         'Import-CourseSelectors'
         'Get-CourseSelector'
         'Resolve-Platform'
+        'Discover-CoursePage'
         'Merge-SelectorTable'
         'Test-DirectoryInContext'
         'Get-CommonSelector'

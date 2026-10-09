@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>学生学习页面（未知版本夹具）</title>
+<!--
+  这份夹具专门用来验证"版本不认识时的兜底发现"（Discover-CoursePage）。
+
+  它刻意满足两件事：
+    1) 结构、class 名全都不是工具已知的三个版本 ——
+       不用 .ncells / .posCatalog_select / .cells，改用假名字，
+       模拟"学习者所在学校又换了一套前端"。
+    2) 但保留学习通跨版本稳定的约定：
+        · 课节节点 id 形如 cur<数字>
+        · 切课函数 getTeacherAjax(courseId, clazzId, chapterId)
+        · #curCourseId / #curClazzId / #curChapterId 三个隐藏输入
+        · 未完成计数在某隐藏 input 里
+        · 任务点完成状态写在 aria-label 里
+  如果兜底发现能在这份页面上跑通，说明遇到第四种结构时它也能尽力而为。
+
+  注意：已完成课节的未完成计数必须是 0。
+  真实平台就是这么表现的，而工具的"是否未完成"判据是"计数 > 0"。
+  写成已完成却计数为 1，夹具就自相矛盾了。
+-->
+<style>
+  body { font-family: "Microsoft Yahei", sans-serif; margin: 0; }
+  #dircol { display: inline-block; width: 60%; vertical-align: top; }
+  .treeBox { padding: 3px 6px; }
+  .treeHead { font-weight: bold; margin-top: 8px; }
+  .taskBadge { float: right; color: #e67e22; }
+  #contentcol { display: inline-block; width: 35%; vertical-align: top; background: #f5f5f5; min-height: 400px; }
+  iframe { border: 1px solid #ccc; }
+</style>
+</head>
+<body>
+
+<div id="dircol">
+  <!-- 这三个隐藏输入是学习通的真实约定，兜底发现要靠它们 -->
+  <input type="hidden" id="curChapterId" value="9000000001">
+  <input type="hidden" id="curCourseId" value="300000001">
+  <input type="hidden" id="curClazzId" value="400000002">
+
+  <div class="treeBox">
+    <div class="treeHead">第一章 绪论</div>
+    <div class="lessonItem"><span id="cur9000000001">1.1 课程介绍</span>
+      <span class="taskBadge">0</span>
+      <input type="hidden" class="leftTaskNum" value="0"></div>
+    <div class="lessonItem"><span id="cur9000000002">1.2 基本概念</span>
+      <span class="taskBadge">0</span>
+      <input type="hidden" class="leftTaskNum" value="0"></div>
+
+    <div class="treeHead">第二章 核心内容</div>
+    <div class="lessonItem"><span id="cur9000000003">2.1 主要方法</span>
+      <span class="taskBadge">2</span>
+      <input type="hidden" class="leftTaskNum" value="2"></div>
+    <div class="lessonItem"><span id="cur9000000004">2.2 案例分析</span>
+      <span class="taskBadge">2</span>
+      <input type="hidden" class="leftTaskNum" value="2"></div>
+    <div class="lessonItem"><span id="cur9000000005">2.3 实践练习</span>
+      <span class="taskBadge">1</span>
+      <input type="hidden" class="leftTaskNum" value="1"></div>
+
+    <div class="treeHead">第三章 总结</div>
+    <div class="lessonItem"><span id="cur9000000006">3.1 课程总结</span>
+      <span class="taskBadge">1</span>
+      <input type="hidden" class="leftTaskNum" value="1"></div>
+  </div>
+</div>
+
+<div id="contentcol">
+  <iframe id="content" width="380" height="300" src="knowledge/unknown.html"></iframe>
+</div>
+
+<script>
+  var LESSONS = {
+    '9000000001': { title: '1.1', done: true,  dur: 5 },
+    '9000000002': { title: '1.2', done: true,  dur: 5 },
+    '9000000003': { title: '2.1', done: false, dur: 8 },
+    '9000000004': { title: '2.2', done: false, dur: 8 },
+    '9000000005': { title: '2.3', done: false, dur: 8 },
+    '9000000006': { title: '3.1', done: false, dur: 8 }
+  };
+
+  // 真实约定：切课函数就叫 getTeacherAjax，目录条目的 onclick 里带三个参数
+  function getTeacherAjax(courseId, clazzId, id) {
+    var info = LESSONS[id];
+    if (!info) { return; }
+    document.getElementById('curChapterId').value = id;
+    try {
+      var u = new URL(location.href);
+      u.searchParams.set('chapterId', id);
+      history.replaceState(null, '', u.toString());
+    } catch (e) { }
+    var f = document.getElementById('content');
+    f.src = 'knowledge/unknown.html?chapter=' + id + '&done=' + (info.done ? '1' : '0') + '&dur=' + info.dur;
+  }
+
+  // 目录条目的 href 里挂上真实的切课调用
+  (function () {
+    var items = document.querySelectorAll('.lessonItem span[id^=cur]');
+    for (var i = 0; i < items.length; i++) {
+      var id = items[i].id.replace('cur', '');
+      items[i].setAttribute('onclick',
+        "getTeacherAjax('300000001','400000002','" + id + "')");
+    }
+  })();
+</script>
+</body>
+</html>
