@@ -70,6 +70,71 @@ function Get-AllVideoContexts {
     return @(Get-VideoFrameContexts -Session $Session -UrlPattern $pattern)
 }
 
+function Select-NextVideoContext {
+    <#
+    .SYNOPSIS
+        在"还没做完的视频任务点"里挑一个。
+    .DESCRIPTION
+        为什么不能只按下标取：一节的视频帧顺序与数量会变（第二个视频的
+        iframe 往往要等第一个播完才加载），按下标会退回已完成的那个，
+        于是反复重播第一个视频、永远轮不到第二个。
+
+        为什么用 FrameId 而不是 ContextId 做身份：
+        ContextId 每次调 Page.createIsolatedWorld 都会变，
+        同一个帧两次枚举拿到的值不同，拿它去"跳过已播过的"
+        永远匹配不上。FrameId 在一帧存在期间是稳定的。
+
+        做法：按顺序把每个播放器帧与内容层里对应的视频任务点配上，
+        在未完成、且没被跳过的里面挑第一个。
+    .PARAMETER ExcludeFrameIds
+        已播过的帧 id，不再选它。
+    .OUTPUTS
+        PSCustomObject：@{ FrameId; ContextId; Total; Unfinished; Reason }
+        ContextId = 0 表示"视频任务点都做完了或都跳过了"。
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$Session,
+        [Parameter(Mandatory)][hashtable]$Selectors,
+        [string[]]$ExcludeFrameIds = @()
+    )
+
+    $frames = @(Get-VideoFrames -Session $Session -UrlPattern ([string]$Selectors.VideoFramePattern))
+    if ($frames.Count -eq 0) {
+        return [pscustomobject]@{ FrameId = ''; ContextId = 0; Total = 0; Unfinished = 0; Reason = '本节没有播放器帧' }
+    }
+
+    $cards = Get-CardsContext -Session $Session -Selectors $Selectors
+    $videoStates = @()
+    if ($cards -gt 0) {
+        $videoStates = @(Get-JobStates -Session $Session -Selectors $Selectors -ContextId $cards |
+            Where-Object { $_.HasVideo })
+    }
+
+    # 顺序一一对应：帧与视频任务点按页面顺序配
+    $paired = ($videoStates.Count -eq $frames.Count)
+    $unfinCount = if ($paired) { @($videoStates | Where-Object { -not $_.Finished }).Count } else { -1 }
+
+    for ($i = 0; $i -lt $frames.Count; $i++) {
+        if ($ExcludeFrameIds -contains [string]$frames[$i].FrameId) { continue }
+        if ($paired -and $videoStates[$i].Finished) { continue }
+        $ctx = Get-FrameContextById -Session $Session -FrameId ([string]$frames[$i].FrameId)
+        return [pscustomobject]@{
+            FrameId   = [string]$frames[$i].FrameId
+            ContextId = $ctx
+            Total     = $frames.Count
+            Unfinished = $unfinCount
+            Reason    = $(if ($paired) { '' } else { '帧数(' + $frames.Count + ')与视频任务点数(' + $videoStates.Count + ')不一致，按顺序取' })
+        }
+    }
+
+    return [pscustomobject]@{
+        FrameId = ''; ContextId = 0; Total = $frames.Count
+        Unfinished = $(if ($unfinCount -ge 0) { $unfinCount } else { 0 })
+        Reason = '没有可播的视频任务点'
+    }
+}
+
 function Get-CardsContext {
     <#
     .SYNOPSIS
@@ -247,14 +312,21 @@ function Get-JobStates {
     .DESCRIPTION
         依据是每个任务点图标的 aria-label —— 平台自己写的状态：
             "任务点已完成" / "任务点未完成"
-        这是最可靠的信号，比"看视频播到百分之几"强得多：
-        视频位置会因重新加载而清零，对已完成的课节会误判成未完成；
-        而 aria-label 是平台对"这个任务点算不算数"的最终表态。
+        这比"看视频播到百分之几"可靠：视频位置会因重新加载而清零，
+        对已完成的课节会误判；aria-label 是平台对这个任务点算不算数的表态。
 
-        另外也能数出任务点总数，用于判断一节课有几个视频/其他任务点。
+        另外能数出任务点总数与其中几个是视频，用于判断一节课有几个视频。
     .OUTPUTS
-        PSCustomObject[]：@{ Index; Finished; Label; HasVideo }
+        PSCustomObject[]：@{ Index; Label; Finished; HasVideo; Readable }
         读不到时返回空数组。
+    .NOTES
+        返回数组要小心：不能写 @($r.Value | ConvertFrom-Json)。
+        ConvertFrom-Json 对 JSON 数组本身就返回 Object[]，
+        再包一层会变成"一个元素，里面是整个数组" ——
+        于是 Count 得到 1、属性全变成数组（输出成 "True False" 这种）。
+        本项目在 Get-CdpTargets / Get-ChapterTree 上踩过同样的坑，
+        这里一律"先赋值再判断"。实测：两个任务点时那个写法让
+        Count 变成 1，多视频/多任务点的判断全错。
     #>
     [CmdletBinding()]
     param(
@@ -263,20 +335,24 @@ function Get-JobStates {
         [Parameter(Mandatory)][int]$ContextId
     )
 
-    $sel = ConvertTo-JsLiteral -Value ([string]$Selectors.JobIcon)
+    $iconSel = ConvertTo-JsLiteral -Value ([string]$Selectors.JobIcon)
     $js = @"
 (function(){
-  var ic = document.querySelectorAll('$($sel.Trim('"' ))');
+  var ic = document.querySelectorAll('$iconSel');
   var out = [];
   for (var i = 0; i < ic.length; i++){
     var e = ic[i];
-    var lb = e.getAttribute('aria-label') || '';
-    var p = e.parentElement;
+    var lb = (e.getAttribute('aria-label') || '').trim();
+    // 只有平台**明确说**"已完成"才算完成。
+    // 读不到、文案不认识一律按未完成处理 ——
+    // 默认成完成会让还有任务点的课节被跳过。
+    var fin = (lb === '任务点已完成') || (lb.indexOf('已完成') >= 0 && lb.indexOf('未完成') < 0);
     out.push({
       Index: i,
       Label: lb,
-      Finished: lb.indexOf('已完成') >= 0 && lb.indexOf('未完成') < 0,
-      HasVideo: String(e.className).indexOf('ans-job-video') >= 0
+      Finished: fin,
+      HasVideo: String(e.className).indexOf('ans-job-video') >= 0,
+      Readable: lb.length > 0
     });
   }
   return JSON.stringify(out);
@@ -284,14 +360,24 @@ function Get-JobStates {
 "@
 
     $r = Invoke-CdpJs -Session $Session -Expression $js -ContextId $ContextId
-    if ($r.Error -or -not $r.Value) { return @() }
-    try {
-        $arr = @($r.Value | ConvertFrom-Json)
-        return $arr
-    } catch {
+    if ($r.Error -or -not $r.Value) {
+        Write-CdpDiag ('Get-JobStates 读不到: ' + $r.Error)
+        return @()
+    }
+
+    # 先赋值，再判断是不是数组 —— 不要写 @(... | ConvertFrom-Json)
+    $parsed = $null
+    try { $parsed = $r.Value | ConvertFrom-Json } catch {
         Write-CdpDiag ('Get-JobStates 解析失败: ' + $_.Exception.Message)
         return @()
     }
+    if ($null -eq $parsed) { return @() }
+
+    $items = if ($parsed -is [array]) { $parsed } else { @($parsed) }
+    Write-CdpDiag ('Get-JobStates: ' + $items.Count + ' 个任务点，已完成 ' +
+        @($items | Where-Object { $_.Finished }).Count + ' 个，其中视频 ' +
+        @($items | Where-Object { $_.HasVideo }).Count + ' 个')
+    return $items
 }
 
 function Test-JobFinished {

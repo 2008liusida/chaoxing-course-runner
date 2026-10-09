@@ -108,20 +108,33 @@ function Invoke-Lesson {
     # 一节课可能有多个视频任务点（实测 1.4 节有两个），每个视频在自己的
     # iframe 里。原来只取第一个，于是播完第一个就以为整节完成，
     # 其余任务点没做、课节永远完不成。这里记住当前在播第几个。
-    $videoIndex = 0
     $videoTotal = 0
     # 上次播报过的"还剩几个任务点"，避免每轮都刷同一句
     $jobAnnounced = -1
 
     while ((Get-Date) -lt $deadline) {
-        # 每次重新枚举，因为第二个视频的 iframe 往往要等第一个播完才加载出时长
-        $videoCtxs = @(Get-AllVideoContexts -Session $Session -Selectors $Selectors)
-        if ($videoCtxs.Count -gt 0) { $videoTotal = $videoCtxs.Count }
-        if ($videoIndex -ge $videoCtxs.Count) { $videoIndex = [Math]::Max(0, $videoCtxs.Count - 1) }
-        $videoCtx = if ($videoCtxs.Count -gt 0) { [int]$videoCtxs[$videoIndex] } else { 0 }
+        # 在**还没做完**的视频任务点里挑一个。
+        # 不能只按下标取：视频帧的顺序与数量会变（第二个视频的 iframe
+        # 往往要等第一个播完才加载），按下标会退回已完成的那个，
+        # 于是反复重播第一个视频、永远轮不到第二个。这是使用者实测到的现象。
+        $pick = Select-NextVideoContext -Session $Session -Selectors $Selectors -ExcludeFrameIds $playedFrameIds
+        if ($pick.Total -gt 0) { $videoTotal = $pick.Total }
+        $videoCtx = [int]$pick.ContextId
+        $currentFrameId = [string]$pick.FrameId
 
-        if ($videoTotal -gt 1 -and $videoCtx -gt 0 -and -not $playbackStarted) {
-            Say ('本节有 ' + $videoTotal + ' 个视频任务点，先从第 ' + ($videoIndex + 1) + ' 个开始') 'INFO'
+        if ($videoCtx -gt 0 -and $videoTotal -gt 1 -and -not $playbackStarted) {
+            Say ('本节共 ' + $videoTotal + ' 个视频任务点' +
+                 $(if ($pick.Unfinished -gt 0) { '，还有 ' + $pick.Unfinished + ' 个没播完' } else { '' })) 'INFO'
+        }
+        if ($videoCtx -eq 0 -and $pick.Total -gt 0) {
+            # 视频都做完了，本节却还没归零 —— 剩下的任务点不是视频（例如 PPT）。
+            # 这不是失败，是工具做不了的部分，所以要说清楚、不要空转。
+            if ($dirLeft -gt 0) {
+                Say ('本节的视频任务点都已完成，但目录还差 ' + $dirLeft +
+                     ' 个任务点 —— 剩下的多半是 PPT 之类的非视频任务点，需要手动完成。') 'WARN'
+                Write-CdpDiag ('课节 ' + $Lesson.Id + ' 视频已做完，目录仍剩 ' + $dirLeft + '，判定为非视频任务点')
+            }
+            return $false
         }
 
         # 保证页面可见：Chromium 在页面 hidden 时不允许加载/播放视频。
@@ -333,29 +346,15 @@ function Invoke-Lesson {
 
         # ---- 播到结尾 ----
         if ($state.Current -ge ($state.Duration - 1)) {
-            # 先看这一节还有没有别的视频任务点没播。
-            # 有就接着播下一个，别急着宣布整节完成。
-            $ctxsNow = @(Get-AllVideoContexts -Session $Session -Selectors $Selectors)
-            $nextIdx = -1
-            for ($k = $videoIndex + 1; $k -lt $ctxsNow.Count; $k++) {
-                $st2 = Get-VideoState -Session $Session -ContextId ([int]$ctxsNow[$k])
-                # 还没播完的（时长未知也算，它可能只是还没加载）
-                if ($st2.Ok -and ($st2.Duration -le 0 -or $st2.Current -lt ($st2.Duration - 2))) {
-                    $nextIdx = $k
-                    break
-                }
+            # 记下这个帧已播过，避免它被再次选中
+            if ($currentFrameId -and ($playedFrameIds -notcontains [string]$currentFrameId)) {
+                $playedFrameIds = @($playedFrameIds + [string]$currentFrameId)
             }
-            if ($nextIdx -ge 0) {
-                Say ('第 ' + ($videoIndex + 1) + ' 个视频已播完，接着播第 ' + ($nextIdx + 1) + ' 个（共 ' + $ctxsNow.Count + ' 个任务点）') 'INFO'
-                $videoIndex = $nextIdx
-                $playbackStarted = $false
-                $lastPosition = -1.0
-                $stallCount = 0
-                $lastMilestoneMin = -1
-                Start-Sleep -Seconds 5
-                continue
-            }
-
+            # 这一段播完了。还轮不到在这里决定"下一个播哪个" ——
+            # 循环开头的 Select-NextVideoContext 会按"未完成 + 没播过"
+            # 重新挑；下面紧接着的那段会在确认本视频已登记后 continue，
+            # 回到开头自然就换片了。
+            # （原来这里按下标再找一遍，既重复又容易退回已完成的视频。）
             Say '已播到结尾，等待平台登记完成状态…'
 
             # 已播到结尾，所以此时 DOM 标记是可信的 —— 位置本身已经证明播完了。
@@ -380,6 +379,37 @@ function Invoke-Lesson {
             if ($registered) {
                 Say '任务点已登记完成' 'OK'
                 return $true
+            }
+
+            # 先看这个视频自己的任务点是不是已经被平台标记完成了。
+            # 是的话说明视频这段没问题，本节没归零是因为还有别的任务点
+            # （PPT 之类），这时重播视频纯属白费时间 —— 使用者实测到
+            # 工具把已完成的第一个视频反复重播，就是这么来的。
+            $cardsNow = Get-CardsContext -Session $Session -Selectors $Selectors
+            $thisDone = $false
+            if ($cardsNow -gt 0) {
+                $st = @(Get-JobStates -Session $Session -Selectors $Selectors -ContextId $cardsNow) |
+                      Where-Object { $_.HasVideo -and $_.Finished }
+                if (@($st).Count -gt 0) { $thisDone = $true }
+            }
+            if ($thisDone -or ($playedFrameIds -contains [string]$currentFrameId)) {
+                if ($currentFrameId) {
+                    $playedFrameIds = @($playedFrameIds + [string]$currentFrameId | Select-Object -Unique)
+                }
+                $nxt = Select-NextVideoContext -Session $Session -Selectors $Selectors -ExcludeFrameIds $playedFrameIds
+                if ($nxt.ContextId -gt 0) {
+                    Say '这个视频已登记完成，接着播下一个视频任务点'
+                    $videoCtx = [int]$nxt.ContextId
+                    $playbackStarted = $false
+                    $lastPosition = -1.0
+                    $stallCount = 0
+                    $lastMilestoneMin = -1
+                    Start-Sleep -Seconds 3
+                    continue
+                }
+                Say ('本节的视频任务点都已完成，目录还差 ' + $dirLeft +
+                     ' 个（多半是 PPT 之类的非视频任务点，需要手动完成）') 'WARN'
+                return $false
             }
 
             if ($replayLeft -gt 0) {

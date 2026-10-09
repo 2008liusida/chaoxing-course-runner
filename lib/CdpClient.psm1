@@ -712,6 +712,66 @@ function Get-CdpFrames {
     return $list
 }
 
+function Get-VideoFrames {
+    <#
+    .SYNOPSIS
+        列出所有播放器帧，返回**帧 id**（稳定）与上下文 id（易变）。
+    .DESCRIPTION
+        为什么要区分这两个 id：
+          · frameId 在一帧存在期间是稳定的，可以拿来当身份标识
+          · executionContextId 每次调 Page.createIsolatedWorld 都会变，
+            同一个帧两次枚举拿到的值不同
+        踩过的坑：拿上下文 id 当标识去"跳过已播过的视频"，
+        结果每次都匹配不上，选出来的上下文谁也对应不上。
+    .OUTPUTS
+        PSCustomObject[]：@{ FrameId; Url; Index }；读不到时返回空数组。
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$Session,
+        [Parameter(Mandatory)][string]$UrlPattern
+    )
+
+    $result = New-Object System.Collections.ArrayList
+    $i = 0
+    foreach ($f in (Get-CdpFrames -Session $Session)) {
+        if ($f.Url -notmatch $UrlPattern) { continue }
+        $i++
+        [void]$result.Add([pscustomobject]@{
+            FrameId = [string]$f.Id
+            Url     = [string]$f.Url
+            Index   = $i
+        })
+    }
+    return $result.ToArray()
+}
+
+function Get-FrameContextById {
+    <#
+    .SYNOPSIS
+        给指定帧 id 建一个执行上下文，返回它的 contextId。
+    .OUTPUTS
+        Int32；失败返回 0。
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$Session,
+        [Parameter(Mandatory)][string]$FrameId
+    )
+    try {
+        $resp = Send-Cdp -Session $Session -Method 'Page.createIsolatedWorld' -Params @{
+            frameId             = $FrameId
+            worldName           = 'ccrf' + [Guid]::NewGuid().ToString('N').Substring(0, 8)
+            grantUniveralAccess = $true
+        }
+        $ctx = Get-CdpField -Object $resp -Path 'result.executionContextId'
+        if ($ctx) { return [int]$ctx }
+    } catch {
+        Write-CdpDiag ('Get-FrameContextById 失败 (' + $FrameId + '): ' + $_.Exception.Message)
+    }
+    return 0
+}
+
 function Get-VideoFrameContexts {
     <#
     .SYNOPSIS
