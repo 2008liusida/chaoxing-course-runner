@@ -102,7 +102,7 @@ function Get-ChapterTree {
 
     $js = @"
 (function(){
-  var nodeSel = '$n', rowSel = '$r', cntSel = '$c', prefix = '$p2', rootSpec = '$rootSelJs';
+  var nodeSel = '$n', rowSel = '$r', cntSel = '$c', prefix = '$p2', rootSpec = '$rootSelJs', chapterMark = '$chapterMarkJs';
 
   // 目录根：优先用选择器给的，其次找常见容器，最后退回 body
   var dirRoot = null;
@@ -356,7 +356,11 @@ function Resolve-LessonRange {
 
     # 把一个描述解析成摊平列表里的下标（找不到返回 -1）
     function Find-Index {
-        param([string]$Text)
+        param(
+            [string]$Text,
+            # 作为"终点"解析时置位：章号要落到该章最后一节
+            [switch]$PreferLast
+        )
         if ([string]::IsNullOrWhiteSpace($Text)) { return -1 }
         $s = $Text.Trim()
 
@@ -373,13 +377,24 @@ function Resolve-LessonRange {
             return -1
         }
 
-        # 2) 纯章号：定位到该章第一节
+        # 2) 纯章号
+        #    作为起点 -> 该章第一节
+        #    作为终点 -> 该章最后一节（由 $PreferLast 决定）
+        # 两边都取第一节是错的：那样 "-From 2 -To 2"（想听整个第 2 章）
+        # 会退化成"只听 2.1 一节"。
         if ($s -match '^(\d+)$') {
             $num = [int]$Matches[1]
+            $first = -1; $last = -1
             for ($i = 0; $i -lt $flat.Count; $i++) {
-                if ($flat[$i].Chapter -eq $num -and $flat[$i].Section -eq 1) { return $i }
+                if ($flat[$i].Chapter -eq $num) {
+                    if ($first -lt 0) { $first = $i }
+                    $last = $i
+                }
             }
-            # 该章不存在 -> 当序号用（1 起）
+            if ($first -ge 0) {
+                if ($PreferLast) { return $last } else { return $first }
+            }
+            # 该章不存在 -> 当目录序号用（1 起）
             if ($num -ge 1 -and $num -le $flat.Count) { return ($num - 1) }
             return -1
         }
@@ -398,7 +413,8 @@ function Resolve-LessonRange {
     }
 
     $iFrom = Find-Index -Text $From
-    $iTo = Find-Index -Text $To
+    # 终点要多一步：若写的是章号，应落到该章最后一节
+    $iTo = Find-Index -Text $To -PreferLast
 
     if (-not [string]::IsNullOrWhiteSpace($From) -and $iFrom -lt 0) {
         return [pscustomobject]@{ Ok = $false; LessonIds = @(); FromText = $From; ToText = $To

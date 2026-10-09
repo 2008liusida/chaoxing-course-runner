@@ -110,6 +110,8 @@ function Invoke-Lesson {
     # 其余任务点没做、课节永远完不成。这里记住当前在播第几个。
     $videoIndex = 0
     $videoTotal = 0
+    # 上次播报过的"还剩几个任务点"，避免每轮都刷同一句
+    $jobAnnounced = -1
 
     while ((Get-Date) -lt $deadline) {
         # 每次重新枚举，因为第二个视频的 iframe 往往要等第一个播完才加载出时长
@@ -209,37 +211,46 @@ function Invoke-Lesson {
             continue
         }
 
-        # ---- 平台是否已登记完成 ----
-        # 唯一的判据是任务点图标上的 aria-label —— 平台自己写的状态：
-        #     "任务点已完成" / "任务点未完成"
+        # ---- 本节到底做完没有：以目录里的权威计数为准 ----
+        # 目录里的 jobUnfinishCount 是平台自己维护的计数，它归零才算整节做完。
         #
-        # 走过的弯路（都别再犯）：
-        #   1) 只看 .ans-job-finished 这个 class。它在某些版本里不可靠，
-        #      课节刚点开就存在，于是把没播的课节谎报成完成。
-        #   2) 改成"class 标记 + 视频播放位置"交叉验证。这个更糟：
-        #      已完成的课节重新打开时视频位置会归零，于是把平台明确标注
-        #      "任务点已完成"的课节判成"标记不可信"，反复重播，
-        #      还会打出误导使用者的警告。
-        # aria-label 才是平台对"这个任务点算不算数"的最终表态。
+        # 为什么不能只看内容层帧：切课后帧是异步重新加载的，
+        # 里面可能还是**上一节**的任务点列表。踩过的坑 ——
+        # 2.1 节目录里明明写着"还剩 3 个任务点"，内容层帧里那个图标也写着
+        # "任务点未完成"，工具却报"本节 1 个任务点平台均已标记完成"就跳过了。
+        #
+        # 走过的其它弯路（都别再犯）：
+        #   1) 只看 .ans-job-finished 这个 class —— 某些版本里它课节刚点开就存在，
+        #      把没播的课节谎报成完成。
+        #   2) class 标记 + 视频播放位置交叉验证 —— 更糟：已完成的课节重新
+        #      打开时视频位置会归零，于是把平台明确标注已完成的课节判成
+        #      "标记不可信"，反复重播，还打出误导使用者的警告。
+        $latest = Get-LessonById -Session $Session -Selectors $Selectors -LessonId $Lesson.Id
+        $dirLeft = -1
+        if ($latest -and $latest.PSObject.Properties['UnfinishedCount']) {
+            $dirLeft = [int]$latest.UnfinishedCount
+        }
+
+        if ($dirLeft -eq 0) {
+            Clear-ProgressLine
+            Say '本节任务点已全部完成（目录计数已归零）' 'OK'
+            return $true
+        }
+        if ($dirLeft -gt 0 -and -not $playbackStarted -and $jobAnnounced -ne $dirLeft) {
+            $jobAnnounced = $dirLeft
+            Say ('本节还剩 ' + $dirLeft + ' 个任务点未完成') 'INFO'
+        }
+
+        # 内容层只用来决定"下一个该播哪个视频"，不用它判完成
         $cardsCtx = Get-CardsContext -Session $Session -Selectors $Selectors
         $jobStates = @()
         if ($cardsCtx -gt 0) {
             $jobStates = @(Get-JobStates -Session $Session -Selectors $Selectors -ContextId $cardsCtx)
         }
-        $jobTotal = $jobStates.Count
-        $jobUnfinished = @($jobStates | Where-Object { -not $_.Finished })
-
-        if ($jobTotal -gt 0 -and $jobUnfinished.Count -eq 0) {
-            Clear-ProgressLine
-            Say ('本节 ' + $jobTotal + ' 个任务点平台均已标记完成') 'OK'
-            return $true
-        }
-        if ($jobTotal -gt 0) {
-            Write-CdpDiag ('课节 ' + $Lesson.Id + ' 任务点 ' + $jobTotal +
-                ' 个，未完成 ' + $jobUnfinished.Count + ' 个')
-            if (-not $playbackStarted) {
-                Say ('本节共 ' + $jobTotal + ' 个任务点，还有 ' + $jobUnfinished.Count + ' 个未完成') 'INFO'
-            }
+        if ($jobStates.Count -gt 0) {
+            Write-CdpDiag ('课节 ' + $Lesson.Id + ' 目录剩余=' + $dirLeft +
+                '，内容层任务点=' + $jobStates.Count +
+                '，其中已完成=' + @($jobStates | Where-Object { $_.Finished }).Count)
         }
 
         # ---- 时长未就绪：先触发播放（学习通要靠 play() 才开始加载）----
