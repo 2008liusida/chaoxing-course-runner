@@ -162,14 +162,15 @@ function Invoke-Lesson {
 
         if ($videoCtx -gt 0 -and $videoTotal -gt 1 -and -not $playbackStarted) {
             Say ('本节共 ' + $videoTotal + ' 个视频任务点' +
-                 $(if ($pick.Unfinished -gt 0) { '，还有 ' + $pick.Unfinished + ' 个没播完' } else { '' })) 'INFO'
+                 $(if ($pick.Pending -gt 0) { '，还有 ' + $pick.Pending + ' 个没播完' } else { '' })) 'INFO'
         }
         if ($videoCtx -eq 0 -and $pick.Total -gt 0) {
             # 视频都做完了，本节却还没归零 —— 剩下的任务点不是视频（例如 PPT）。
             # 这不是失败，是工具做不了的部分，所以要说清楚、不要空转。
             if ($dirLeft -gt 0) {
-                Say ('本节的视频任务点都已完成，但目录还差 ' + $dirLeft +
-                     ' 个任务点 —— 剩下的多半是 PPT 之类的非视频任务点，需要手动完成。') 'WARN'
+                Say ('本节能播的视频都播完了，但目录还差 ' + $dirLeft +
+                     ' 个任务点未完成 —— 剩下的多半是 PPT 之类的非视频任务点。') 'WARN'
+                Say '把 PPT 翻到底（翻完会弹一个确认框，点掉才算完成）后，再跑一次本工具。' 'WARN'
                 Write-CdpDiag ('课节 ' + $Lesson.Id + ' 视频已做完，目录仍剩 ' + $dirLeft + '，判定为非视频任务点')
             }
             return $false

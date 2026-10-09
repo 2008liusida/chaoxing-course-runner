@@ -73,24 +73,31 @@ function Get-AllVideoContexts {
 function Select-NextVideoContext {
     <#
     .SYNOPSIS
-        在"还没做完的视频任务点"里挑一个。
+        按页面顺序，挑出下一个还需要播放的视频帧。
     .DESCRIPTION
-        为什么不能只按下标取：一节的视频帧顺序与数量会变（第二个视频的
-        iframe 往往要等第一个播完才加载），按下标会退回已完成的那个，
-        于是反复重播第一个视频、永远轮不到第二个。
+        踩过的坑：曾经想用"视频帧数"与"视频任务点数"配对来判断
+        哪个做完、哪个没做。实测这不可靠 ——
+        2.4 节目录剩 2 个任务点、内容层只有 1 个播放器帧却有 2 个任务点图标，
+        配对看着"对上了"，于是把那个帧当成已完成直接跳过，视频根本没播。
+
+        帧是内容层按需加载的，任务点图标是另一套渲染，
+        两者的数量关系不能当门禁。所以改成按顺序、逐个来：
+          1) 跳过已经播完的帧（用稳定的 FrameId 记账，不猜）
+          2) 跳过其任务点被平台**明确标注已完成**的帧
+          3) 其余取页面顺序第一个
+
+        第 2 步的判据刻意放宽：只有明确读到"任务点未完成"才算未完成，
+        数量对不上、读不到时一律当作"还没做完"继续播 ——
+        宁可多播一遍，也不能把没看的视频当成看过了。
 
         为什么用 FrameId 而不是 ContextId 做身份：
         ContextId 每次调 Page.createIsolatedWorld 都会变，
-        同一个帧两次枚举拿到的值不同，拿它去"跳过已播过的"
-        永远匹配不上。FrameId 在一帧存在期间是稳定的。
-
-        做法：按顺序把每个播放器帧与内容层里对应的视频任务点配上，
-        在未完成、且没被跳过的里面挑第一个。
+        同一个帧两次枚举拿到的值不同，拿它去重永远匹配不上。
     .PARAMETER ExcludeFrameIds
         已播过的帧 id，不再选它。
     .OUTPUTS
-        PSCustomObject：@{ FrameId; ContextId; Total; Unfinished; Reason }
-        ContextId = 0 表示"视频任务点都做完了或都跳过了"。
+        PSCustomObject：@{ FrameId; ContextId; Total; Pending; Reason }
+        ContextId = 0 表示没有需要播的帧了。
     #>
     [CmdletBinding()]
     param(
@@ -101,37 +108,39 @@ function Select-NextVideoContext {
 
     $frames = @(Get-VideoFrames -Session $Session -UrlPattern ([string]$Selectors.VideoFramePattern))
     if ($frames.Count -eq 0) {
-        return [pscustomobject]@{ FrameId = ''; ContextId = 0; Total = 0; Unfinished = 0; Reason = '本节没有播放器帧' }
+        return [pscustomobject]@{ FrameId = ''; ContextId = 0; Total = 0; Pending = 0; Reason = '本节没有播放器帧' }
     }
 
     $cards = Get-CardsContext -Session $Session -Selectors $Selectors
-    $videoStates = @()
+    $states = @()
     if ($cards -gt 0) {
-        $videoStates = @(Get-JobStates -Session $Session -Selectors $Selectors -ContextId $cards |
-            Where-Object { $_.HasVideo })
+        $states = @(Get-JobStates -Session $Session -Selectors $Selectors -ContextId $cards)
     }
 
-    # 顺序一一对应：帧与视频任务点按页面顺序配
-    $paired = ($videoStates.Count -eq $frames.Count)
-    $unfinCount = if ($paired) { @($videoStates | Where-Object { -not $_.Finished }).Count } else { -1 }
+    # 明确标注"未完成"的任务点有几个（仅用于汇报，不当门禁）
+    $pending = @($states | Where-Object { $_.HasVideo -and -not $_.Finished }).Count
+    # 明确标注"已完成"的个数；帧与它数量一致时才敢用它跳过
+    $doneCount = @($states | Where-Object { $_.HasVideo -and $_.Finished }).Count
+    $pairedByCount = ($states.Count -eq $frames.Count)
 
+    $skippedDone = 0
     for ($i = 0; $i -lt $frames.Count; $i++) {
         if ($ExcludeFrameIds -contains [string]$frames[$i].FrameId) { continue }
-        if ($paired -and $videoStates[$i].Finished) { continue }
+        # 只有"数量能一一对上"且该位明确标注已完成时，才跳过
+        if ($pairedByCount -and $states[$i].Finished) { $skippedDone++; continue }
         $ctx = Get-FrameContextById -Session $Session -FrameId ([string]$frames[$i].FrameId)
         return [pscustomobject]@{
             FrameId   = [string]$frames[$i].FrameId
             ContextId = $ctx
             Total     = $frames.Count
-            Unfinished = $unfinCount
-            Reason    = $(if ($paired) { '' } else { '帧数(' + $frames.Count + ')与视频任务点数(' + $videoStates.Count + ')不一致，按顺序取' })
+            Pending   = $pending
+            Reason    = ''
         }
     }
 
     return [pscustomobject]@{
-        FrameId = ''; ContextId = 0; Total = $frames.Count
-        Unfinished = $(if ($unfinCount -ge 0) { $unfinCount } else { 0 })
-        Reason = '没有可播的视频任务点'
+        FrameId = ''; ContextId = 0; Total = $frames.Count; Pending = $pending
+        Reason = $(if ($skippedDone -gt 0) { '明确标注已完成的帧都跳过了' } else { '都播过了' })
     }
 }
 
