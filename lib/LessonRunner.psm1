@@ -109,6 +109,13 @@ function Invoke-Lesson {
     # iframe 里。原来只取第一个，于是播完第一个就以为整节完成，
     # 其余任务点没做、课节永远完不成。这里记住当前在播第几个。
     $videoTotal = 0
+    # 本节里已经播过的**播放器帧 id**，避免在同一节里来回打转。
+    # 记帧 id 而不是上下文 id：后者每次调 Page.createIsolatedWorld 都会变，
+    # 拿它去重永远匹配不上（实测过）。
+    # 必须在循环外初始化 —— 本模块开了 Set-StrictMode，未初始化就引用会抛错。
+    $playedFrameIds = @()
+    # 本节当前正在播的帧 id，播到结尾时用来记账
+    $currentFrameId = ''
     # 上次播报过的"还剩几个任务点"，避免每轮都刷同一句
     $jobAnnounced = -1
 
