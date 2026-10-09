@@ -79,7 +79,12 @@ Check 'Get-CdpTargets 先赋值再返回' ($cdpSrc -match '(?s)function Get-CdpT
 Check 'Get-VideoFrames 存在（提供稳定帧 id）' ($cdpSrc -match 'function Get-VideoFrames')
 Check 'Get-FrameContextById 存在' ($cdpSrc -match 'function Get-FrameContextById')
 Check 'Select-NextVideoContext 按帧 id 排除' ($videoSrc -match '\$ExcludeFrameIds')
-Check 'Select-NextVideoContext 跳过已完成' ($videoSrc -match 'if \(\$paired -and \$videoStates\[\$i\]\.Finished\) \{ continue \}')
+# 判据在实现里改过两次：
+#   最初按"帧数与任务点数配对"跳过 -> 实测 2.4 节 1 帧 2 任务点被误判，
+#   现在改成只有"数量能一一对上"且该位明确标注已完成时才跳过。
+Check 'Select-NextVideoContext 只在对得上时跳过已完成' `
+    ($videoSrc -match 'if \(\$pairedByCount -and \$states\[\$i\]\.Finished\) \{ \$skippedDone\+\+; continue \}')
+Check 'Select-NextVideoContext 不把配对当门禁' ($videoSrc -match '\$pairedByCount = \(\$states\.Count -eq \$frames\.Count\)')
 
 Write-Host ''
 if ($fail -eq 0) {
