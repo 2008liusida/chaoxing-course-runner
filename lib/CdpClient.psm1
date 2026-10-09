@@ -388,7 +388,8 @@ function New-CdpSession {
 
     Send-Cdp -Session $session -Method 'Page.enable' -Params @{} | Out-Null
     Send-Cdp -Session $session -Method 'Runtime.enable' -Params @{} | Out-Null
-    return $session
+    # 一元逗号强制按数组返回，避免单元素被展开成对象
+    return ,$session
 }
 
 function Close-CdpSession {

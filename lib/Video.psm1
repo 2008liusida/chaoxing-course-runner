@@ -377,7 +377,13 @@ function Get-JobStates {
     Write-CdpDiag ('Get-JobStates: ' + $items.Count + ' 个任务点，已完成 ' +
         @($items | Where-Object { $_.Finished }).Count + ' 个，其中视频 ' +
         @($items | Where-Object { $_.HasVideo }).Count + ' 个')
-    return $items
+    # 必须用 -NoEnumerate 写进管道：
+    # PowerShell 会把函数输出的数组逐个元素枚举出去，单元素数组于是变成
+    # 那个元素本身，调用方拿到的就不是数组、没有 .Count ——
+    # 实测本节只有 1 个任务点时抛
+    # "The property 'Count' cannot be found on this object"。
+    # 注意 return ,$items 不管用：return 自身还会再枚举一层。
+    Write-Output -NoEnumerate $items
 }
 
 function Test-JobFinished {
