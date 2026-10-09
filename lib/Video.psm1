@@ -318,15 +318,20 @@ function Get-JobStates {
         另外能数出任务点总数与其中几个是视频，用于判断一节课有几个视频。
     .OUTPUTS
         PSCustomObject[]：@{ Index; Label; Finished; HasVideo; Readable }
-        读不到时返回空数组。
+        读不到时返回空数组（用 -NoEnumerate 保证调用方拿到的始终是数组）。
     .NOTES
-        返回数组要小心：不能写 @($r.Value | ConvertFrom-Json)。
-        ConvertFrom-Json 对 JSON 数组本身就返回 Object[]，
-        再包一层会变成"一个元素，里面是整个数组" ——
-        于是 Count 得到 1、属性全变成数组（输出成 "True False" 这种）。
-        本项目在 Get-CdpTargets / Get-ChapterTree 上踩过同样的坑，
-        这里一律"先赋值再判断"。实测：两个任务点时那个写法让
-        Count 变成 1，多视频/多任务点的判断全错。
+        这里连续踩过三个 PowerShell 的坑，改的时候别退回旧写法：
+
+        1) @($r.Value | ConvertFrom-Json)
+           会得到"一个元素，里面是整个数组" —— Count 变成 1、
+           属性全变成数组（打印成 "True False" 这种）。
+        2) $items = if ($parsed -is [array]) { $parsed } else { @($parsed) }
+           看着对，但 PowerShell 里 @($singleObject) 仍是单对象，
+           于是 $items 没有 .Count，连本函数的日志都会抛
+           "The property 'Count' cannot be found on this object"。
+        3) 直接 return 数组
+           函数输出会被逐个元素枚举，单元素数组变成那个元素本身。
+           必须用 Write-Output -NoEnumerate。
     #>
     [CmdletBinding()]
     param(
@@ -362,27 +367,37 @@ function Get-JobStates {
     $r = Invoke-CdpJs -Session $Session -Expression $js -ContextId $ContextId
     if ($r.Error -or -not $r.Value) {
         Write-CdpDiag ('Get-JobStates 读不到: ' + $r.Error)
-        return @()
+        Write-Output -NoEnumerate @()
+        return
     }
 
-    # 先赋值，再判断是不是数组 —— 不要写 @(... | ConvertFrom-Json)
     $parsed = $null
     try { $parsed = $r.Value | ConvertFrom-Json } catch {
         Write-CdpDiag ('Get-JobStates 解析失败: ' + $_.Exception.Message)
-        return @()
+        Write-Output -NoEnumerate @()
+        return
     }
-    if ($null -eq $parsed) { return @() }
+    if ($null -eq $parsed) {
+        Write-Output -NoEnumerate @()
+        return
+    }
 
-    $items = if ($parsed -is [array]) { $parsed } else { @($parsed) }
-    Write-CdpDiag ('Get-JobStates: ' + $items.Count + ' 个任务点，已完成 ' +
-        @($items | Where-Object { $_.Finished }).Count + ' 个，其中视频 ' +
-        @($items | Where-Object { $_.HasVideo }).Count + ' 个')
-    # 必须用 -NoEnumerate 写进管道：
-    # PowerShell 会把函数输出的数组逐个元素枚举出去，单元素数组于是变成
-    # 那个元素本身，调用方拿到的就不是数组、没有 .Count ——
-    # 实测本节只有 1 个任务点时抛
-    # "The property 'Count' cannot be found on this object"。
-    # 注意 return ,$items 不管用：return 自身还会再枚举一层。
+    # 明确、不依赖语言细节地兜成数组。
+    # 注意 @($singleObject) 在 PowerShell 里仍是单对象，所以要先 [array] 再 @()。
+    $list = New-Object System.Collections.ArrayList
+    foreach ($one in @($parsed)) { [void]$list.Add($one) }
+    $items = $list.ToArray()
+
+    # 先把数量算出来再拼字符串 —— 别在拼接里访问属性，出错时更难定位
+    $nAll = [int]$items.Length
+    $nDone = 0
+    $nVideo = 0
+    foreach ($it in $items) {
+        if ($it.Finished) { $nDone++ }
+        if ($it.HasVideo) { $nVideo++ }
+    }
+    Write-CdpDiag ('Get-JobStates: ' + $nAll + ' 个任务点，已完成 ' + $nDone + ' 个，其中视频 ' + $nVideo + ' 个')
+
     Write-Output -NoEnumerate $items
 }
 

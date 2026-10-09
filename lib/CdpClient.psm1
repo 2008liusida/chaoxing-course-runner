@@ -744,7 +744,10 @@ function Get-VideoFrames {
             Index   = $i
         })
     }
-    return $result.ToArray()
+    # 用 -NoEnumerate 而不是 return：函数输出会被逐个元素枚举，
+    # 只有一个视频帧时 return 会让调用方拿到单对象、没有 .Count。
+    # （踩过：本节只有 1 个视频时整节报 "property 'Count' cannot be found"。）
+    Write-Output -NoEnumerate $result.ToArray()
 }
 
 function Get-FrameContextById {
