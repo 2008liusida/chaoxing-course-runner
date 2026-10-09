@@ -165,14 +165,42 @@ function Invoke-Lesson {
                  $(if ($pick.Pending -gt 0) { '，还有 ' + $pick.Pending + ' 个没播完' } else { '' })) 'INFO'
         }
         if ($videoCtx -eq 0 -and $pick.Total -gt 0) {
-            # 视频都做完了，本节却还没归零 —— 剩下的任务点不是视频（例如 PPT）。
-            # 这不是失败，是工具做不了的部分，所以要说清楚、不要空转。
-            if ($dirLeft -gt 0) {
-                Say ('本节能播的视频都播完了，但目录还差 ' + $dirLeft +
-                     ' 个任务点未完成 —— 剩下的多半是 PPT 之类的非视频任务点。') 'WARN'
-                Say '把 PPT 翻到底（翻完会弹一个确认框，点掉才算完成）后，再跑一次本工具。' 'WARN'
-                Write-CdpDiag ('课节 ' + $Lesson.Id + ' 视频已做完，目录仍剩 ' + $dirLeft + '，判定为非视频任务点')
+            if ($dirLeft -le 0) { return $true }
+
+            # 视频都播完了，但目录还没归零。
+            # **别立刻下结论** —— 平台是异步登记的：实测 2.2/2.3/2.4 三节，
+            # 工具跑的时候计数还没更新、当场报"没活干"，
+            # 过几分钟再查却都变成"完成"了。那几节其实刷上了。
+            # 所以先给平台一点时间，反复查目录计数。
+            if (-not $playbackStarted) { }
+            $settleDeadline = (Get-Date).AddSeconds([double]$Settings.JobSettleSeconds)
+            $settled = -1
+            while ((Get-Date) -lt $settleDeadline) {
+                Start-Sleep -Seconds 5
+                $cur = Get-LessonById -Session $Session -Selectors $Selectors -LessonId $Lesson.Id
+                if ($cur -and $cur.PSObject.Properties['UnfinishedCount']) {
+                    $settled = [int]$cur.UnfinishedCount
+                }
+                if ($settled -eq 0) { break }
+                $remain = [int]($settleDeadline - (Get-Date)).TotalSeconds
+                if ($remain -gt 0 -and ($remain % 15) -lt 6) {
+                    Say ('视频已播完，等平台登记（还剩 ' + $remain + ' 秒，目录未完成 ' + $settled + '）') 'DEBUG'
+                }
             }
+
+            if ($settled -eq 0) {
+                Clear-ProgressLine
+                Say '本节任务点已全部完成（目录计数已归零）' 'OK'
+                return $true
+            }
+
+            # 等过之后还没归零 —— 剩下的确实不是视频（例如 PPT）。
+            # 这不是失败，是工具做不了的部分，所以要说清楚、不要空转。
+            Say ('本节能播的视频都播完了，但目录还差 ' + $(if ($settled -gt 0) { $settled } else { $dirLeft }) +
+                 ' 个任务点未完成 —— 剩下的多半是 PPT 之类的非视频任务点。') 'WARN'
+            Say '把 PPT 翻到底（翻完会弹一个确认框，点掉才算完成）后，再跑一次本工具。' 'WARN'
+            Write-CdpDiag ('课节 ' + $Lesson.Id + ' 视频已做完并等待 ' + $Settings.JobSettleSeconds +
+                ' 秒，目录仍剩 ' + $settled + '，判定为非视频任务点')
             return $false
         }
 

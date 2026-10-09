@@ -140,7 +140,10 @@ function Get-RunnerSettings {
         To                      = ''
         MaxLessons              = 50
         MaxReplayPerLesson      = 1
-        MaxWaitMinutesPerLesson = 40
+        # 视频播完后等平台登记完成的秒数。平台是异步登记的，
+        # 实测最多要几十秒计数才归零；等太短会把已刷上的课节误判成没做。
+        JobSettleSeconds        = 120
+    MaxWaitMinutesPerLesson = 40
         PlaybackRate            = 1.0
         PollSeconds             = 1
         KeepForeground          = $true
