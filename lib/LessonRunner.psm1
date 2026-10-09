@@ -120,6 +120,37 @@ function Invoke-Lesson {
     $jobAnnounced = -1
 
     while ((Get-Date) -lt $deadline) {
+        # ---- 本节到底做完没有：以目录里的权威计数为准 ----
+        # 目录里的 jobUnfinishCount 是平台自己维护的计数，它归零才算整节做完。
+        # 必须放在最前面：后面选视频时要引用 $dirLeft 说明"剩下的是不是非视频任务点"。
+        #
+        # 为什么不能只看内容层帧：切课后帧是异步重新加载的，
+        # 里面可能还是**上一节**的任务点列表。踩过的坑 ——
+        # 2.1 节目录里明明写着"还剩 3 个任务点"，内容层帧里那个图标也写着
+        # "任务点未完成"，工具却报"本节 1 个任务点平台均已标记完成"就跳过了。
+        #
+        # 走过的其它弯路（都别再犯）：
+        #   1) 只看 .ans-job-finished 这个 class —— 某些版本里它课节刚点开就存在，
+        #      把没播的课节谎报成完成。
+        #   2) class 标记 + 视频播放位置交叉验证 —— 更糟：已完成的课节重新
+        #      打开时视频位置会归零，于是把平台明确标注已完成的课节判成
+        #      "标记不可信"，反复重播，还打出误导使用者的警告。
+        $latest = Get-LessonById -Session $Session -Selectors $Selectors -LessonId $Lesson.Id
+        $dirLeft = -1
+        if ($latest -and $latest.PSObject.Properties['UnfinishedCount']) {
+            $dirLeft = [int]$latest.UnfinishedCount
+        }
+
+        if ($dirLeft -eq 0) {
+            Clear-ProgressLine
+            Say '本节任务点已全部完成（目录计数已归零）' 'OK'
+            return $true
+        }
+        if ($dirLeft -gt 0 -and -not $playbackStarted -and $jobAnnounced -ne $dirLeft) {
+            $jobAnnounced = $dirLeft
+            Say ('本节还剩 ' + $dirLeft + ' 个任务点未完成') 'INFO'
+        }
+
         # 在**还没做完**的视频任务点里挑一个。
         # 不能只按下标取：视频帧的顺序与数量会变（第二个视频的 iframe
         # 往往要等第一个播完才加载），按下标会退回已完成的那个，
@@ -231,35 +262,8 @@ function Invoke-Lesson {
             continue
         }
 
-        # ---- 本节到底做完没有：以目录里的权威计数为准 ----
-        # 目录里的 jobUnfinishCount 是平台自己维护的计数，它归零才算整节做完。
-        #
-        # 为什么不能只看内容层帧：切课后帧是异步重新加载的，
-        # 里面可能还是**上一节**的任务点列表。踩过的坑 ——
-        # 2.1 节目录里明明写着"还剩 3 个任务点"，内容层帧里那个图标也写着
-        # "任务点未完成"，工具却报"本节 1 个任务点平台均已标记完成"就跳过了。
-        #
-        # 走过的其它弯路（都别再犯）：
-        #   1) 只看 .ans-job-finished 这个 class —— 某些版本里它课节刚点开就存在，
-        #      把没播的课节谎报成完成。
-        #   2) class 标记 + 视频播放位置交叉验证 —— 更糟：已完成的课节重新
-        #      打开时视频位置会归零，于是把平台明确标注已完成的课节判成
-        #      "标记不可信"，反复重播，还打出误导使用者的警告。
-        $latest = Get-LessonById -Session $Session -Selectors $Selectors -LessonId $Lesson.Id
-        $dirLeft = -1
-        if ($latest -and $latest.PSObject.Properties['UnfinishedCount']) {
-            $dirLeft = [int]$latest.UnfinishedCount
-        }
-
-        if ($dirLeft -eq 0) {
-            Clear-ProgressLine
-            Say '本节任务点已全部完成（目录计数已归零）' 'OK'
-            return $true
-        }
-        if ($dirLeft -gt 0 -and -not $playbackStarted -and $jobAnnounced -ne $dirLeft) {
-            $jobAnnounced = $dirLeft
-            Say ('本节还剩 ' + $dirLeft + ' 个任务点未完成') 'INFO'
-        }
+        # 目录计数已在循环开头算好（那里要先用到它来决定"还值不值得继续"），
+        # 这里不再重复读取。
 
         # 内容层只用来决定"下一个该播哪个视频"，不用它判完成
         $cardsCtx = Get-CardsContext -Session $Session -Selectors $Selectors
