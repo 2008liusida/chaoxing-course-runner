@@ -231,6 +231,7 @@ function Open-CourseList {
     return $false
 }
 
+# 等使用者登录。同样要盯端口：浏览器被关掉就报出来，不要空等。
 function Wait-UserLogin {
     <#
     .SYNOPSIS
@@ -679,11 +680,32 @@ if (-not $page) {
         Write-Screen -Text '  （左边目录、右边视频那个页面）' -Tone Gray
         Write-Screen -Text ''
 
-        # 自动检测，一直等 —— 不催促、不提示。
-        [void](Wait-Until -Message '' -TimeoutSeconds 14400 -Test {
-            $null -ne (Find-CoursePage -Port $cfg.DebugPort)
-        })
+        # 等页面出现。上限 4 小时，但期间要盯着调试端口 ——
+        # 浏览器一旦被关掉，端口就没了，这时继续等毫无意义，
+        # 表现上却是"卡住不动"，使用者会以为工具死了。
+        $waitDeadline = (Get-Date).AddSeconds(14400)
+        $browserGone = $false
+        while ((Get-Date) -lt $waitDeadline) {
+            if ($null -ne (Find-CoursePage -Port $cfg.DebugPort)) { break }
+
+            # 端口探测失败 = 浏览器被关了
+            $portAlive = $false
+            try { $portAlive = $null -ne (Get-CdpVersion -Port $cfg.DebugPort) } catch { $portAlive = $false }
+            if (-not $portAlive) {
+                # 再确认一次，避免瞬时抖动误判
+                Start-Sleep -Seconds 3
+                try { $portAlive = $null -ne (Get-CdpVersion -Port $cfg.DebugPort) } catch { $portAlive = $false }
+                if (-not $portAlive) { $browserGone = $true; break }
+            }
+            Start-Sleep -Seconds 2
+        }
         Clear-ProgressLine
+
+        if ($browserGone) {
+            Write-Log '浏览器已关闭（调试端口没了），本次结束。' 'ERROR'
+            Write-Log '下次跑不加 -NoLaunch 就会重新启动浏览器。' 'ERROR'
+            exit $EXIT_ENV
+        }
         $page = Find-CoursePage -Port $cfg.DebugPort
     }
 }
